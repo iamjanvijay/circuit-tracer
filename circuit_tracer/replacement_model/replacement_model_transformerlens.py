@@ -381,6 +381,8 @@ class TransformerLensReplacementModel(HookedTransformer):
         else:
             raise TypeError(f"Unsupported prompt type: {type(prompt)}")
 
+        if tokens.ndim == 0:
+            tokens = tokens.unsqueeze(0)
         if tokens.ndim > 1:
             raise ValueError(f"Tensor must be 1-D, got shape {tokens.shape}")
 
@@ -435,6 +437,8 @@ class TransformerLensReplacementModel(HookedTransformer):
             tokens = self.ensure_tokenized(inputs)
         else:
             tokens = inputs.squeeze()
+            if tokens.ndim == 0:
+                tokens = tokens.unsqueeze(0)
 
         assert isinstance(tokens, torch.Tensor), "Tokens must be a tensor"
         assert tokens.ndim == 1, "Tokens must be a 1D tensor"

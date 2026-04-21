@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=1000, initial-scale=1'>
+<link rel='stylesheet' href='./style.css'>
+<title>Per-token Attribution Graphs</title>
+
+<style>
+  .pertok-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 4px 14px 4px;
+    border-bottom: 1px solid #e0e0e0;
+  }
+  .pertok-bar .header-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .pertok-bar select {
+    min-width: 220px;
+    padding: 4px 6px;
+  }
+  .pertok-bar .help {
+    color: #666;
+    font-size: 12px;
+  }
+  .pertok-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .pertok-tok {
+    padding: 3px 7px;
+    border: 1px solid #cfd5dc;
+    border-radius: 4px;
+    background: #f7f9fb;
+    cursor: pointer;
+    white-space: pre;
+    user-select: none;
+  }
+  .pertok-tok:hover {
+    background: #eef3f8;
+  }
+  .pertok-tok.selected {
+    background: #2965cc;
+    color: #fff;
+    border-color: #2965cc;
+  }
+  .pertok-tok.disabled {
+    cursor: default;
+    color: #888;
+    background: #fafafa;
+  }
+  .pertok-tok.disabled:hover {
+    background: #fafafa;
+  }
+  .pertok-pos {
+    font-size: 10px;
+    color: #99a;
+    margin-right: 2px;
+    vertical-align: super;
+  }
+</style>
+
+<div class='tooltip tooltip-hidden'></div>
+<div class='pertok-bar'>
+  <div class='header-row'>
+    <strong>Per-token attribution</strong>
+    <label>base slug:
+      <select id='base-select'></select>
+    </label>
+    <span class='help'>Click any non-BOS token to load the attribution graph that produced it from the prefix on its left.</span>
+  </div>
+  <div class='pertok-strip' id='token-strip'></div>
+</div>
+<div class='cg'></div>
+
+<link rel='stylesheet' href='./attribution_graph/cg.css'>
+<link rel='stylesheet' href='./attribution_graph/gridsnap/gridsnap.css'>
+<link rel='stylesheet' href='./feature_examples/feature-examples.css'>
+
+<script src='https://transformer-circuits.pub/2025/attribution-graphs/static_js/lib/hotserver-client-ws.js'></script>
+<script src='https://transformer-circuits.pub/2025/attribution-graphs/static_js/lib/d3.js'></script>
+<script src='https://transformer-circuits.pub/2025/attribution-graphs/static_js/lib/jetpack_2024-07-20.js'></script>
+<script src='https://transformer-circuits.pub/2025/attribution-graphs/static_js/lib/npy_v0.js'></script>
+<script src='https://unpkg.com/dagre@0.8.5/dist/dagre.min.js'></script>
+<script src='https://unpkg.com/pako@2.1.0/dist/pako.min.js'></script>
+
+<script src='./feature_examples/init-feature-examples-list.js'></script>
+<script src='./feature_examples/init-feature-examples-logits.js'></script>
+<script src='./feature_examples/init-feature-examples.js'></script>
+
+<script src='./util.js'></script>
+<script src='./attribution_graph/util-cg.js'></script>
+<script src='./attribution_graph/render-act-histogram.js'></script>
+<script src='./attribution_graph/gridsnap/init-gridsnap.js'></script>
+<script src='./attribution_graph/init-cg-button-container.js'></script>
+<script src='./attribution_graph/init-cg-link-graph.js'></script>
+<script src='./attribution_graph/init-cg-node-connections.js'></script>
+<script src='./attribution_graph/init-cg-clerp-list.js'></script>
+<script src='./attribution_graph/init-cg-feature-detail.js'></script>
+<script src='./attribution_graph/init-cg-feature-scatter.js'></script>
+<script src='./attribution_graph/init-cg-subgraph.js'></script>
+<script src='./attribution_graph/init-cg.js'></script>
+
+<script>
+window.init = async function(){
+  window.isLocalServing = true;
+
+  const POS_RE = /^(.+)-pos(\d+)$/;
+  const all = (await util.getFile('./data/graph-metadata.json', false)).graphs || [];
+
+  // Group by base slug. For each base, collect graphs with -posNNN suffix.
+  const groups = {};
+  for (const g of all) {
+    const m = g.slug.match(POS_RE);
+    if (!m) continue;
+    const base = m[1], pos = parseInt(m[2], 10);
+    (groups[base] = groups[base] || []).push({pos, meta: g});
+  }
+  for (const k of Object.keys(groups)) {
+    groups[k].sort((a, b) => a.pos - b.pos);
+  }
+  const baseNames = Object.keys(groups).sort();
+
+  if (baseNames.length === 0) {
+    document.getElementById('token-strip').textContent =
+      'No per-token graphs found. Run command_pertok.sh first.';
+    return;
+  }
+
+  // Pick base from URL or default to first.
+  let currentBase = util.params.get('base');
+  if (!currentBase || !groups[currentBase]) currentBase = baseNames[0];
+
+  const baseSel = d3.select('#base-select');
+  baseSel.selectAll('option').data(baseNames).enter().append('option')
+    .attr('value', d => d).text(d => d)
+    .property('selected', d => d === currentBase);
+  baseSel.on('change', function() {
+    util.params.set('base', this.value);
+    util.params.set('clickedPos', null);
+    util.params.set('clickedId', null);
+    location.reload();
+  });
+
+  // Build full token sequence:
+  //   prompt_tokens of pos1 (= prefix before t_1 = ["<bos>"])  +  target of each pos in order.
+  // This yields [<bos>, t_1, t_2, ..., t_N]. For older metadata without
+  // target_tokens, fall back to using the longest entry's prompt_tokens (so
+  // the last real token will be missing).
+  const series = groups[currentBase];
+  const first = series[0];
+  let fullTokens = [...first.meta.prompt_tokens];
+  for (const g of series) {
+    const tt = g.meta.target_tokens;
+    if (tt && tt.length > 0) fullTokens.push(tt[0]);
+  }
+  // Fallback: if no target_tokens at all, use prefix tokens of the longest entry.
+  if (fullTokens.length === first.meta.prompt_tokens.length) {
+    fullTokens = [...series[series.length - 1].meta.prompt_tokens];
+  }
+
+  // posByTokenIndex: token index i in fullTokens -> graph slug for pos i (if any).
+  // pos i graph attributes the token at fullTokens[i] given prefix fullTokens[0..i-1].
+  const slugByPos = {};
+  for (const g of series) slugByPos[g.pos] = g.meta.slug;
+
+  // Initial selection: deep-link via ?clickedPos=N, else first available pos.
+  let clickedPos = parseInt(util.params.get('clickedPos') || '', 10);
+  if (!Number.isFinite(clickedPos) || !slugByPos[clickedPos]) {
+    clickedPos = series[0].pos;
+  }
+
+  window.visState = window.visState || {
+    slug: slugByPos[clickedPos],
+    clickedId: util.params.get('clickedId')?.replace('null', ''),
+    isGridsnap: util.params.get('isGridsnap')?.replace('null', ''),
+  };
+  visState.slug = slugByPos[clickedPos];
+
+  // Render the token strip.
+  const stripSel = d3.select('#token-strip');
+  function renderStrip() {
+    stripSel.html('');
+    fullTokens.forEach((tok, i) => {
+      const hasGraph = slugByPos[i] !== undefined;
+      const isSel = hasGraph && i === clickedPos;
+      const chip = stripSel.append('span')
+        .attr('class', 'pertok-tok' + (isSel ? ' selected' : '') + (hasGraph ? '' : ' disabled'))
+        .attr('title', hasGraph
+          ? `pos${String(i).padStart(3, '0')}: target=${JSON.stringify(tok)}, prefix length=${i}`
+          : `index ${i}: no per-token graph (prefix-only token)`);
+      chip.append('span').attr('class', 'pertok-pos').text(i);
+      chip.append('span').text(tok === '' ? '·' : tok);
+      if (hasGraph) {
+        chip.on('click', () => {
+          clickedPos = i;
+          visState.slug = slugByPos[i];
+          visState.clickedId = undefined;
+          util.params.set('clickedPos', String(i));
+          util.params.set('clickedId', null);
+          renderStrip();
+          renderGraph();
+        });
+      }
+    });
+  }
+
+  function renderGraph() {
+    const m = all.find(g => g.slug === visState.slug);
+    if (!m) return;
+
+    if (typeof m.node_threshold === 'number' && visState.pruningThreshold === undefined) {
+      visState.pruningThreshold = parseFloat(util.params.get('pruningThreshold')) || m.node_threshold;
+    }
+
+    d3.select('.cg').html('');
+    const options = {
+      clickedId: visState.clickedId,
+      clickedIdCb: id => util.params.set('clickedId', id),
+      isGridsnap: visState.isGridsnap || true,
+    };
+    if (visState.pruningThreshold !== undefined) options.pruningThreshold = visState.pruningThreshold;
+    initCg(d3.select('.cg'), visState.slug, options);
+
+    document.title = `Per-token: ${currentBase} pos${clickedPos} → ${m.target_tokens && m.target_tokens[0] || ''}`;
+  }
+
+  renderStrip();
+  renderGraph();
+};
+
+window.init();
+</script>

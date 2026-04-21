@@ -229,6 +229,7 @@ class PruneResult(NamedTuple):
     node_mask: torch.Tensor  # Boolean tensor indicating which nodes to keep
     edge_mask: torch.Tensor  # Boolean tensor indicating which edges to keep
     cumulative_scores: torch.Tensor  # Tensor of cumulative influence scores for each node
+    raw_influence: torch.Tensor  # Raw per-node influence on the output logits
 
 
 def prune_graph(
@@ -305,7 +306,7 @@ def prune_graph(
     final_scores = torch.zeros_like(node_influence)
     final_scores[sorted_indices] = cumulative_scores
 
-    return PruneResult(node_mask, edge_mask, final_scores)
+    return PruneResult(node_mask, edge_mask, final_scores, node_influence)
 
 
 def compute_graph_scores(graph: Graph) -> tuple[float, float]:

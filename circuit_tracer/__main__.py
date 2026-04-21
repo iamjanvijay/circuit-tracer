@@ -126,6 +126,26 @@ def main():
         default=0.98,
         help="Edge threshold for pruning graph files.",
     )
+    attr_parser.add_argument(
+        "--per_token",
+        action="store_true",
+        help=(
+            "Build one attribution graph per prompt-token position: for each real "
+            "token position i (skipping the BOS-only prefix), the target is the "
+            "ground-truth token t_i conditioned on its prefix [BOS, t_1..t_{i-1}]. "
+            "Requires --slug and --graph_file_dir; incompatible with --graph_output_path."
+        ),
+    )
+    attr_parser.add_argument(
+        "--prefix_prompt",
+        type=str,
+        default=None,
+        help=(
+            "Optional. Only valid with --per_token. A string that must be a "
+            "token-level prefix of --prompt; per-token graphs then start at the "
+            "first token of --prompt that is NOT inside --prefix_prompt."
+        ),
+    )
 
     # Server arguments
     attr_parser.add_argument(
@@ -193,6 +213,20 @@ def run_attribution(args, parser):
             "(--slug and --graph_file_dir)"
         )
 
+    if args.per_token:
+        if not create_graph_files_enabled:
+            parser.error(
+                "--per_token requires both --slug and --graph_file_dir "
+                "(one JSON is written per prompt position)."
+            )
+        if args.graph_output_path:
+            parser.error(
+                "--per_token is incompatible with --graph_output_path "
+                "(per-token mode writes multiple graphs, not a single .pt file)."
+            )
+    if args.prefix_prompt is not None and not args.per_token:
+        parser.error("--prefix_prompt is only valid together with --per_token.")
+
     # Ensure graph output directory exists if needed
     if create_graph_files_enabled:
         os.makedirs(args.graph_file_dir, exist_ok=True)
@@ -240,35 +274,102 @@ def run_attribution(args, parser):
         args.model, transcoder, dtype=dtype, backend=args.backend
     )
 
-    logging.info("Running attribution...")
-    graph = attribute(
-        prompt=args.prompt,
-        model=model_instance,  # type:ignore
-        max_n_logits=args.max_n_logits,
-        desired_logit_prob=args.desired_logit_prob,
-        batch_size=args.batch_size,
-        verbose=args.verbose,
-        offload=args.offload,
-        max_feature_nodes=args.max_feature_nodes,
-    )
-
-    # Save to file if output path specified
-    if args.graph_output_path:
-        logging.info(f"Saving graph to {args.graph_output_path}")
-        graph.to_pt(args.graph_output_path)
-
-    # Create graph files if both slug and graph_file_dir are provided
-    if create_graph_files_enabled:
-        logging.info(f"Creating graph files with slug: {args.slug}")
-        create_graph_files(
-            graph_or_path=graph,  # Use the graph object directly
-            slug=args.slug,
-            scan=None,  # No scan argument needed
-            output_path=args.graph_file_dir,
-            node_threshold=args.node_threshold,
-            edge_threshold=args.edge_threshold,
+    if args.per_token:
+        # Tokenize the full prompt once; ensure_tokenized prepends BOS when absent
+        # and is idempotent for tensors already starting with a special token.
+        input_ids = model_instance.ensure_tokenized(args.prompt)
+        n = int(input_ids.shape[0])
+        # Target the first real token onward: i=1 means prefix=[BOS], target=t_1.
+        if n < 2:
+            parser.error(
+                f"--per_token needs a prompt with at least 1 non-BOS token "
+                f"(got tokenized length {n})."
+            )
+        # Determine the starting position. With --prefix_prompt, skip ahead so the
+        # first graph targets the first prompt token *not* covered by the prefix.
+        start_i = 1
+        if args.prefix_prompt is not None:
+            prefix_ids_full = model_instance.ensure_tokenized(args.prefix_prompt)
+            m = int(prefix_ids_full.shape[0])
+            if m >= n:
+                parser.error(
+                    f"--prefix_prompt tokenizes to {m} tokens but --prompt only has "
+                    f"{n}; prefix must be strictly shorter than the prompt."
+                )
+            if not torch.equal(input_ids[:m], prefix_ids_full):
+                parser.error(
+                    "--prefix_prompt is not a token-level prefix of --prompt. "
+                    "This usually means the prefix ends mid-token; align the "
+                    "prefix to a token boundary in --prompt."
+                )
+            start_i = m
+            logging.info(
+                f"--prefix_prompt covers {m} tokens; per-token attribution starts "
+                f"at position {start_i} (target = first token after the prefix)"
+            )
+        logging.info(
+            f"Running per-token attribution over {n - start_i} positions "
+            f"(i={start_i}..{n - 1})"
         )
-        logging.info(f"Graph JSON files written to {args.graph_file_dir}")
+        for i in range(start_i, n):
+            prefix_ids = input_ids[:i]
+            target_id = input_ids[i : i + 1]
+            target_str = model_instance.tokenizer.decode(target_id.tolist())
+            logging.info(
+                f"[per_token] position {i}/{n - 1}: target id={int(target_id)} ({target_str!r})"
+            )
+            graph = attribute(
+                prompt=prefix_ids,
+                model=model_instance,  # type:ignore
+                attribution_targets=target_id,
+                max_n_logits=args.max_n_logits,
+                desired_logit_prob=args.desired_logit_prob,
+                batch_size=args.batch_size,
+                verbose=args.verbose,
+                offload=args.offload,
+                max_feature_nodes=args.max_feature_nodes,
+            )
+            per_slug = f"{args.slug}-pos{i:03d}"
+            logging.info(f"Creating graph files with slug: {per_slug}")
+            create_graph_files(
+                graph_or_path=graph,
+                slug=per_slug,
+                scan=None,
+                output_path=args.graph_file_dir,
+                node_threshold=args.node_threshold,
+                edge_threshold=args.edge_threshold,
+            )
+        logging.info(f"Per-token graph JSON files written to {args.graph_file_dir}")
+    else:
+        logging.info("Running attribution...")
+        graph = attribute(
+            prompt=args.prompt,
+            model=model_instance,  # type:ignore
+            max_n_logits=args.max_n_logits,
+            desired_logit_prob=args.desired_logit_prob,
+            batch_size=args.batch_size,
+            verbose=args.verbose,
+            offload=args.offload,
+            max_feature_nodes=args.max_feature_nodes,
+        )
+
+        # Save to file if output path specified
+        if args.graph_output_path:
+            logging.info(f"Saving graph to {args.graph_output_path}")
+            graph.to_pt(args.graph_output_path)
+
+        # Create graph files if both slug and graph_file_dir are provided
+        if create_graph_files_enabled:
+            logging.info(f"Creating graph files with slug: {args.slug}")
+            create_graph_files(
+                graph_or_path=graph,  # Use the graph object directly
+                slug=args.slug,
+                scan=None,  # No scan argument needed
+                output_path=args.graph_file_dir,
+                node_threshold=args.node_threshold,
+                edge_threshold=args.edge_threshold,
+            )
+            logging.info(f"Graph JSON files written to {args.graph_file_dir}")
 
 
 def run_server(args):

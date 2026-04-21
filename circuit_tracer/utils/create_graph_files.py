@@ -30,7 +30,7 @@ def load_graph_data(file_path) -> Graph:
     return graph
 
 
-def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores):
+def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores, raw_influence):
     """Create all nodes for the graph."""
     start_time = time.time()
 
@@ -49,15 +49,24 @@ def create_nodes(graph: Graph, node_mask, tokenizer, cumulative_scores):
                 pos,
                 feat_idx,
                 influence=cumulative_scores[node_idx],
+                raw_influence=raw_influence[node_idx].item(),
                 activation=graph.activation_values[graph.selected_features[node_idx]].item(),
             )
         elif node_idx in range(n_features, error_end_idx):
             layer, pos = divmod(node_idx - n_features, graph.n_pos)
-            nodes[node_idx] = Node.error_node(layer, pos, influence=cumulative_scores[node_idx])
+            nodes[node_idx] = Node.error_node(
+                layer,
+                pos,
+                influence=cumulative_scores[node_idx],
+                raw_influence=raw_influence[node_idx].item(),
+            )
         elif node_idx in range(error_end_idx, token_end_idx):
             pos = node_idx - error_end_idx
             nodes[node_idx] = Node.token_node(
-                pos, graph.input_tokens[pos], influence=cumulative_scores[node_idx]
+                pos,
+                graph.input_tokens[pos],
+                influence=cumulative_scores[node_idx],
+                raw_influence=raw_influence[node_idx].item(),
             )
         elif node_idx in range(token_end_idx, len(cumulative_scores)):
             pos = node_idx - token_end_idx
@@ -135,6 +144,7 @@ def build_model(graph: Graph, used_nodes, used_edges, slug, scan, node_threshold
         prompt_tokens=[tokenizer.decode(t) for t in graph.input_tokens],
         prompt=graph.input_string,
         node_threshold=node_threshold,
+        target_tokens=[t.token_str for t in graph.logit_targets],
     )
 
     qparams = QParams(
@@ -191,13 +201,13 @@ def create_graph_files(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     graph.to(device)
-    node_mask, edge_mask, cumulative_scores = (
+    node_mask, edge_mask, cumulative_scores, raw_influence = (
         el.cpu() for el in prune_graph(graph, node_threshold, edge_threshold)
     )
     graph.to("cpu")
 
     tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
-    nodes = create_nodes(graph, node_mask, tokenizer, cumulative_scores)
+    nodes = create_nodes(graph, node_mask, tokenizer, cumulative_scores, raw_influence)
     used_nodes, used_edges = create_used_nodes_and_edges(graph, nodes, edge_mask)
     model = build_model(graph, used_nodes, used_edges, slug, scan, node_threshold, tokenizer)
 
