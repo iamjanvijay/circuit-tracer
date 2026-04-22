@@ -26,6 +26,22 @@
     color: #666;
     font-size: 12px;
   }
+  .pertok-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .pertok-label {
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #667;
+    padding: 6px 8px 0 0;
+    min-width: 52px;
+    text-align: right;
+  }
   .pertok-strip {
     display: flex;
     flex-wrap: wrap;
@@ -34,6 +50,7 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 14px;
     line-height: 1.6;
+    flex: 1 1 auto;
   }
   .pertok-tok {
     padding: 3px 7px;
@@ -44,7 +61,7 @@
     white-space: pre;
     user-select: none;
   }
-  .pertok-tok:hover {
+  .pertok-tok.output:hover {
     background: #eef3f8;
   }
   .pertok-tok.selected {
@@ -52,19 +69,179 @@
     color: #fff;
     border-color: #2965cc;
   }
-  .pertok-tok.disabled {
+  .pertok-tok.input {
     cursor: default;
-    color: #888;
-    background: #fafafa;
+    color: #4a4a4a;
+    background: #eceff3;
+    border-color: #d6dae0;
   }
-  .pertok-tok.disabled:hover {
-    background: #fafafa;
+  .pertok-tok.output {
+    background: #e6f0fb;
+    border-color: #b7d0ee;
+    color: #123a77;
+  }
+  .pertok-empty {
+    font-size: 12px;
+    color: #888;
+    padding: 6px 2px;
   }
   .pertok-pos {
     font-size: 10px;
     color: #99a;
     margin-right: 2px;
     vertical-align: super;
+  }
+  .pertok-tok.selected .pertok-pos {
+    color: #cfd9ee;
+  }
+  /* Per-token tick labels rendered inside the attribution graph (init-cg-link-graph.js).
+     Scoped via .pertok-input / .pertok-output classes that are only applied when
+     window.pertokCtx is defined (i.e. pertok.html is driving the page). */
+  .link-graph .pertok-input text {
+    fill: #6a6f78;
+  }
+  .link-graph .pertok-output text {
+    fill: #123a77;
+    font-weight: 600;
+  }
+  .link-graph .pertok-output:hover text {
+    text-decoration: underline;
+  }
+  .link-graph .pertok-selected text {
+    fill: #2965cc;
+    font-weight: 700;
+  }
+  /* The .cg-stack holds one .cg-instance per output position; all are
+     mounted eagerly so switching between them is a CSS-only toggle.
+     Grid + grid-area: 1/1 overlays every instance in the same cell, so they
+     all get real layout dimensions at render time. visibility:hidden (not
+     display:none) keeps the hidden instances laid out so their dimensions
+     remain valid; pointer-events:none makes them non-clickable. */
+  .cg-stack {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .cg-stack > .cg-instance {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+  .cg-instance.cg-hidden {
+    visibility: hidden;
+    pointer-events: none;
+  }
+  /* Token-level abstraction: chip highlighting driven by the knob controls.
+     paintTokenLevel() sets the chip background via inline style using
+     orRdColor; these classes handle the rest (dim/emphasis/rank). */
+  .tl-controls input[type='number'] {
+    width: 64px;
+    padding: 2px 4px;
+  }
+  .tl-controls select { min-width: 140px; }
+  .tl-controls .tl-legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #666;
+    font-size: 12px;
+  }
+  .tl-legend .tl-legend-bar {
+    width: 80px;
+    height: 10px;
+    border: 1px solid #cfd5dc;
+    background: linear-gradient(to right, #fff7ec, #fc8d59, #7f0000);
+  }
+  /* Dim chips that aren't in the current metric's selected set. */
+  .pertok-tok.tl-dim {
+    opacity: 0.3;
+    filter: grayscale(0.7);
+  }
+  /* Emphasize chips in the selected set (thicker border). */
+  .pertok-tok.tl-emph {
+    border-color: #8b1a1a;
+    box-shadow: 0 0 0 1px #8b1a1a inset;
+  }
+  /* Rank badge prepended for top-k / top-p%. */
+  .pertok-rank {
+    font-size: 9px;
+    color: #7a001a;
+    font-weight: 700;
+    margin-right: 3px;
+  }
+  /* Per-chip influence badge shown under token_level: "r=…" (raw_influence)
+     and "c=…%" (cumulative share among tokens only). */
+  .pertok-inf {
+    font-size: 9px;
+    color: #333;
+    margin-left: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    opacity: 0.8;
+  }
+  .pertok-tok.tl-painted.input,
+  .pertok-tok.tl-painted.output {
+    color: #222;
+  }
+
+  /* When any abstraction is active: hide the full attribution-graph panel so
+     the token sequence is the focus, and give every chip a fixed compact
+     footprint (sized for sequences up to ~500 tokens) so rank/inf badges don't
+     change its size. The position number is pinned to a corner via absolute
+     positioning; everything else stacks in a centered column. Long tokens
+     ellipsize rather than stretching the box. */
+  body[data-abstraction]:not([data-abstraction='none']) .cg-stack {
+    display: none;
+  }
+  body[data-abstraction]:not([data-abstraction='none']) .pertok-strip {
+    gap: 2px;
+    font-size: 11px;
+    line-height: 1.2;
+  }
+  body[data-abstraction]:not([data-abstraction='none']) .pertok-tok {
+    position: relative;
+    min-width: 50px;
+    min-height: 32px;
+    box-sizing: border-box;
+    padding: 10px 3px 2px 3px;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    text-align: center;
+    border-radius: 3px;
+    border-width: 1px;
+  }
+  body[data-abstraction]:not([data-abstraction='none']) .pertok-tok > .pertok-tok-text {
+    max-width: 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: block;
+    font-size: 11px;
+  }
+  body[data-abstraction]:not([data-abstraction='none']) .pertok-pos {
+    position: absolute;
+    top: 0;
+    right: 3px;
+    margin-right: 0;
+    vertical-align: baseline;
+    font-size: 8px;
+    line-height: 1;
+  }
+  body[data-abstraction]:not([data-abstraction='none']) .pertok-rank {
+    position: absolute;
+    top: 0;
+    left: 3px;
+    margin: 0;
+    font-size: 8px;
+    line-height: 1;
+  }
+  body[data-abstraction]:not([data-abstraction='none']) .pertok-inf {
+    display: block;
+    margin-left: 0;
+    font-size: 8px;
+    line-height: 1;
   }
 </style>
 
@@ -75,11 +252,34 @@
     <label>base slug:
       <select id='base-select'></select>
     </label>
-    <span class='help'>Click any non-BOS token to load the attribution graph that produced it from the prefix on its left.</span>
+    <label>abstraction:
+      <select id='abstraction-select'></select>
+    </label>
+    <span class='help'>Click any output token to load the attribution graph that produced it from the prefix on its left.</span>
   </div>
-  <div class='pertok-strip' id='token-strip'></div>
+  <div class='header-row tl-controls' id='tl-controls' style='display:none'>
+    <label>view:
+      <select id='tl-view'>
+        <option value='heatmap'>heatmap (all)</option>
+        <option value='topk'>top-k</option>
+        <option value='topp'>top-p%</option>
+      </select>
+    </label>
+    <label class='tl-k-wrap'>k: <input id='tl-k' type='number' min='1' step='1' value='5'></label>
+    <label class='tl-p-wrap'>p (%): <input id='tl-p' type='number' min='1' max='100' step='1' value='80'></label>
+    <span class='tl-legend'>low<span class='tl-legend-bar'></span>high</span>
+    <span class='help'>Visualization knobs over the same token_level data — all three highlight input-token nodes by path-aggregated influence on the generated token.</span>
+  </div>
+  <div class='pertok-row'>
+    <span class='pertok-label'>Input</span>
+    <div class='pertok-strip' id='input-strip'></div>
+  </div>
+  <div class='pertok-row'>
+    <span class='pertok-label'>Output</span>
+    <div class='pertok-strip' id='output-strip'></div>
+  </div>
 </div>
-<div class='cg'></div>
+<div class='cg-stack'></div>
 
 <link rel='stylesheet' href='./attribution_graph/cg.css'>
 <link rel='stylesheet' href='./attribution_graph/gridsnap/gridsnap.css'>
@@ -130,7 +330,7 @@ window.init = async function(){
   const baseNames = Object.keys(groups).sort();
 
   if (baseNames.length === 0) {
-    document.getElementById('token-strip').textContent =
+    document.getElementById('input-strip').textContent =
       'No per-token graphs found. Run command_pertok.sh first.';
     return;
   }
@@ -147,7 +347,263 @@ window.init = async function(){
     util.params.set('base', this.value);
     util.params.set('clickedPos', null);
     util.params.set('clickedId', null);
+    util.params.set('abstraction', null);
     location.reload();
+  });
+
+  // Abstractions: union across this base's graphs. "none" is always present and
+  // first; additional abstractions are whatever the dump emitted. Switching the
+  // abstraction reloads the page with ?abstraction=X; each abstraction resolves
+  // to a different JSON filename below, keeping per-abstraction state isolated.
+  const absSet = new Set(['none']);
+  for (const g of groups[currentBase]) {
+    for (const a of (g.meta.abstractions || ['none'])) absSet.add(a);
+  }
+  const abstractions = ['none', ...[...absSet].filter(a => a !== 'none').sort()];
+  let currentAbstraction = util.params.get('abstraction') || 'none';
+  if (!absSet.has(currentAbstraction)) currentAbstraction = 'none';
+
+  const absSel = d3.select('#abstraction-select');
+  absSel.selectAll('option').data(abstractions).enter().append('option')
+    .attr('value', d => d).text(d => d)
+    .property('selected', d => d === currentAbstraction);
+  absSel.on('change', function() {
+    util.params.set('abstraction', this.value === 'none' ? null : this.value);
+    // Abstraction changes the node set, so clear any clickedId bound to the
+    // previous abstraction's nodes (e.g. a feature id absent from token_level).
+    util.params.set('clickedId', null);
+    // tl-* params are token_level-only; drop them when leaving.
+    if (this.value !== 'token_level') {
+      util.params.set('tlView', null);
+      util.params.set('tlK', null);
+      util.params.set('tlP', null);
+    }
+    location.reload();
+  });
+
+  // Effective fetch slug for a given pos under the current abstraction.
+  // Base graph keeps the bare slug; other abstractions append a "__name" suffix
+  // matching the dump-time filename convention in create_graph_files.py.
+  function effectiveSlug(baseSlug) {
+    return currentAbstraction === 'none'
+      ? baseSlug
+      : `${baseSlug}__${currentAbstraction}`;
+  }
+
+  // Self-contained OrRd-style interpolator so we don't rely on
+  // d3.interpolateOrRd (which lives in d3-scale-chromatic and isn't reliably
+  // bundled into every custom d3 build). Three-stop ramp from pale cream to
+  // dark red, matching the CSS legend gradient in .tl-legend-bar exactly.
+  function orRdColor(t) {
+    t = Math.max(0, Math.min(1, t));
+    const stops = [
+      [0.00, [255, 247, 236]],  // #fff7ec
+      [0.50, [252, 141,  89]],  // #fc8d59
+      [1.00, [127,   0,   0]],  // #7f0000
+    ];
+    for (let i = 1; i < stops.length; i++) {
+      if (t <= stops[i][0]) {
+        const a = stops[i - 1], b = stops[i];
+        const u = (t - a[0]) / (b[0] - a[0]);
+        const rgb = a[1].map((c, j) => Math.round(c + u * (b[1][j] - c)));
+        return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+      }
+    }
+    return 'rgb(127, 0, 0)';
+  }
+
+  // ---- token_level visualization knobs -------------------------------------
+  // Three client-side views over the same token_level JSON: heatmap (color all
+  // prefix chips by |raw_influence|), top-k (highlight the k most influential),
+  // top-p% (smallest set whose cumulative |influence| >= p%). The abstraction
+  // JSON gives us one raw_influence per token node; everything below is pure
+  // presentation — no repacked dumps, no reloads on knob change.
+  const TL_VIEWS = ['heatmap', 'topk', 'topp'];
+  let tlView = util.params.get('tlView') || 'heatmap';
+  if (!TL_VIEWS.includes(tlView)) tlView = 'heatmap';
+  let tlK = parseInt(util.params.get('tlK'), 10);
+  if (!Number.isFinite(tlK) || tlK < 1) tlK = 5;
+  let tlP = parseFloat(util.params.get('tlP'));
+  if (!Number.isFinite(tlP) || tlP <= 0 || tlP > 100) tlP = 80;
+
+  // Map pos -> [{pos: ctx_idx, raw: raw_influence}, ...] for that position's
+  // token_level graph. Populated lazily when the abstraction is active.
+  const tlInfByPos = {};
+  async function preloadTokenLevel() {
+    if (currentAbstraction !== 'token_level') return;
+    await Promise.all(series.map(async g => {
+      if (tlInfByPos[g.pos]) return;
+      try {
+        const data = await util.getFile(`./graph_data/${g.meta.slug}__token_level.json`, false);
+        tlInfByPos[g.pos] = (data.nodes || [])
+          .filter(n => n.feature_type === 'embedding')
+          .map(n => ({
+            pos: n.ctx_idx,
+            raw: n.raw_influence || 0,
+            // Server-side `influence` is the cumulative-among-tokens share (see
+            // abstractions._token_level). Fall back to a client-side compute if
+            // the JSON predates that change.
+            cum: (typeof n.influence === 'number') ? n.influence : null,
+          }));
+      } catch (e) {
+        console.warn(`token_level preload failed for pos=${g.pos}:`, e);
+        tlInfByPos[g.pos] = [];
+      }
+    }));
+  }
+
+  function paintTokenLevel() {
+    // Always reset first so toggling knobs / switching away cleans up state.
+    // Restoring title from data-base-title also prevents tooltip-suffix
+    // accumulation across repeated paints.
+    document.querySelectorAll('.pertok-tok').forEach(el => {
+      el.classList.remove('tl-dim', 'tl-emph', 'tl-painted');
+      el.style.background = '';
+      const r = el.querySelector('.pertok-rank');
+      if (r) r.remove();
+      const v = el.querySelector('.pertok-inf');
+      if (v) v.remove();
+      const base = el.getAttribute('data-base-title');
+      if (base) el.setAttribute('title', base);
+    });
+    if (currentAbstraction !== 'token_level') return;
+
+    const entries = tlInfByPos[clickedPos];
+    if (!entries || entries.length === 0) return;
+    // Only positions strictly before clickedPos are prefix contributors — the
+    // chip at clickedPos is the target itself, and chips beyond are future
+    // outputs not yet in the prefix.
+    const prefix = entries.filter(t => t.pos < clickedPos);
+    if (prefix.length === 0) return;
+
+    const magnitudes = prefix.map(d => Math.abs(d.raw));
+    const maxMag = d3.max(magnitudes) || 1;
+    const totalMag = d3.sum(magnitudes) || 1;
+    const sorted = [...prefix].sort((a, b) => Math.abs(b.raw) - Math.abs(a.raw));
+    // Per-pos cumulative share among the current prefix tokens. Mirrors the
+    // server-side `influence` recomputed in abstractions._token_level; we
+    // redo it client-side because `prefix` here is further restricted to
+    // tokens at pos < clickedPos (server-side uses all tokens in the JSON,
+    // but those sets coincide for a given target position).
+    const cumByPos = new Map();
+    {
+      let acc = 0;
+      for (const d of sorted) {
+        acc += Math.abs(d.raw);
+        cumByPos.set(d.pos, totalMag > 0 ? acc / totalMag : 0);
+      }
+    }
+
+    let selected = null;    // Set<pos> or null (null = no filter, heatmap mode)
+    let ranks = null;       // Map<pos, rank> for topk/topp only
+    if (tlView === 'topk') {
+      const k = Math.min(Math.max(1, tlK), sorted.length);
+      const keep = sorted.slice(0, k);
+      selected = new Set(keep.map(d => d.pos));
+      ranks = new Map(keep.map((d, i) => [d.pos, i + 1]));
+    } else if (tlView === 'topp') {
+      const target = totalMag * (Math.min(Math.max(1, tlP), 100) / 100);
+      const keep = [];
+      let acc = 0;
+      for (const d of sorted) {
+        keep.push(d);
+        acc += Math.abs(d.raw);
+        if (acc >= target) break;
+      }
+      selected = new Set(keep.map(d => d.pos));
+      ranks = new Map(keep.map((d, i) => [d.pos, i + 1]));
+    }
+
+    const byPos = new Map(prefix.map(d => [d.pos, d]));
+    document.querySelectorAll('.pertok-tok[data-tpos]').forEach(el => {
+      const pos = parseInt(el.getAttribute('data-tpos'), 10);
+      const d = byPos.get(pos);
+      if (!d) return;  // not a prefix contributor
+      // Never override the currently-selected target chip's styling.
+      if (el.classList.contains('selected')) return;
+      const cum = cumByPos.get(pos) ?? 0;
+      const rankTxt = selected && ranks ? ` | rank=${ranks.get(pos) ?? '—'}` : '';
+      // Attach the hover tooltip for every prefix chip — including dimmed ones
+      // — so users can inspect why any chip was excluded by top-k / top-p%.
+      const base = el.getAttribute('data-base-title') || '';
+      el.setAttribute(
+        'title',
+        `${base}  |  raw_influence=${d.raw.toFixed(4)}`
+        + `  |  cum_influence(tokens-only)=${(cum * 100).toFixed(1)}%`
+        + rankTxt
+      );
+      const isIn = selected === null || selected.has(pos);
+      if (!isIn) {
+        el.classList.add('tl-dim');
+        return;
+      }
+      // heatmap view: gradient color by |raw_influence|, since every chip is
+      // kept and the gradient IS the signal. top-k / top-p% views: every kept
+      // chip is an equal member of the filtered set, so a gradient would
+      // misleadingly imply intra-set ranking via color — use one uniform tint
+      // instead. Per-chip magnitude still lives in the visible `r·c%` badge
+      // and the hover tooltip.
+      el.classList.add('tl-painted');
+      if (tlView === 'heatmap') {
+        const intensity = Math.abs(d.raw) / maxMag;
+        el.style.background = orRdColor(0.12 + 0.78 * intensity);
+        if (intensity > 0.55) el.classList.add('tl-emph');
+      } else {
+        el.style.background = orRdColor(0.55);
+        el.classList.add('tl-emph');
+      }
+      const inf = document.createElement('span');
+      inf.className = 'pertok-inf';
+      // Super-compact "<raw>·<cum>%" — tuned to fit the 50px chip at 8px font.
+      // Leading zero is stripped so ".12·58%" lands in ~30px. Full precision
+      // lives in the hover tooltip set above.
+      const rawTxt = d.raw.toFixed(2).replace(/^0\./, '.').replace(/^-0\./, '-.');
+      inf.textContent = `${rawTxt}·${(cum * 100).toFixed(0)}%`;
+      el.appendChild(inf);
+      if (ranks) {
+        const rank = document.createElement('span');
+        rank.className = 'pertok-rank';
+        rank.textContent = '#' + ranks.get(pos);
+        el.insertBefore(rank, el.firstChild);
+      }
+    });
+  }
+
+  // Wire up the visualization-knob controls. All three inputs repaint live — no reload.
+  const tlCtrl = document.getElementById('tl-controls');
+  const tlViewSel = document.getElementById('tl-view');
+  const tlKIn = document.getElementById('tl-k');
+  const tlPIn = document.getElementById('tl-p');
+  tlViewSel.value = tlView;
+  tlKIn.value = tlK;
+  tlPIn.value = tlP;
+  tlCtrl.style.display = (currentAbstraction === 'token_level') ? '' : 'none';
+  function tlSyncVisibility() {
+    tlKIn.parentElement.style.display = (tlView === 'topk') ? '' : 'none';
+    tlPIn.parentElement.style.display = (tlView === 'topp') ? '' : 'none';
+  }
+  tlSyncVisibility();
+  tlViewSel.addEventListener('change', () => {
+    tlView = tlViewSel.value;
+    util.params.set('tlView', tlView === 'heatmap' ? null : tlView);
+    tlSyncVisibility();
+    paintTokenLevel();
+  });
+  tlKIn.addEventListener('input', () => {
+    const v = parseInt(tlKIn.value, 10);
+    if (Number.isFinite(v) && v >= 1) {
+      tlK = v;
+      util.params.set('tlK', String(v));
+      paintTokenLevel();
+    }
+  });
+  tlPIn.addEventListener('input', () => {
+    const v = parseFloat(tlPIn.value);
+    if (Number.isFinite(v) && v > 0 && v <= 100) {
+      tlP = v;
+      util.params.set('tlP', String(v));
+      paintTokenLevel();
+    }
   });
 
   // Build full token sequence:
@@ -155,7 +611,15 @@ window.init = async function(){
   // This yields [<bos>, t_1, t_2, ..., t_N]. For older metadata without
   // target_tokens, fall back to using the longest entry's prompt_tokens (so
   // the last real token will be missing).
-  const series = groups[currentBase];
+  const rawSeries = groups[currentBase];
+  // For no-prefix pertok (series starts at pos 1), treat <bos> + the first
+  // generated token as the input. The first graph (pos 1) is dropped from
+  // the effective series so the first token moves into the input row and
+  // the output chips start from the second generated position.
+  // For pertok_prefix (series starts at pos > 1), the user-provided prefix
+  // is already the input and the full series is kept.
+  const noPrefix = rawSeries.length > 0 && rawSeries[0].pos === 1;
+  const series = noPrefix && rawSeries.length > 1 ? rawSeries.slice(1) : rawSeries;
   const first = series[0];
   let fullTokens = [...first.meta.prompt_tokens];
   for (const g of series) {
@@ -179,62 +643,171 @@ window.init = async function(){
   }
 
   window.visState = window.visState || {
-    slug: slugByPos[clickedPos],
+    slug: effectiveSlug(slugByPos[clickedPos]),
     clickedId: util.params.get('clickedId')?.replace('null', ''),
     isGridsnap: util.params.get('isGridsnap')?.replace('null', ''),
   };
-  visState.slug = slugByPos[clickedPos];
+  visState.slug = effectiveSlug(slugByPos[clickedPos]);
 
-  // Render the token strip.
-  const stripSel = d3.select('#token-strip');
-  function renderStrip() {
-    stripSel.html('');
-    fullTokens.forEach((tok, i) => {
-      const hasGraph = slugByPos[i] !== undefined;
-      const isSel = hasGraph && i === clickedPos;
-      const chip = stripSel.append('span')
-        .attr('class', 'pertok-tok' + (isSel ? ' selected' : '') + (hasGraph ? '' : ' disabled'))
-        .attr('title', hasGraph
-          ? `pos${String(i).padStart(3, '0')}: target=${JSON.stringify(tok)}, prefix length=${i}`
-          : `index ${i}: no per-token graph (prefix-only token)`);
+  // Render the two token rows. Input tokens come from the earliest graph's
+  // prompt_tokens (prefix before any generation). Output tokens are the
+  // target_tokens[0] of each graph in the series, in order.
+  const inputSel = d3.select('#input-strip');
+  const outputSel = d3.select('#output-strip');
+  const inputTokens = first.meta.prompt_tokens || [];
+
+  function renderInputStrip() {
+    inputSel.html('');
+    // For pertok_prefix, drop the final prompt-token chip: the prefix
+    // positions have no per-token graphs in the raw data, so the last one
+    // has no clickable counterpart. For no-prefix pertok, every position
+    // has a per-token graph in the raw data (pos_1 is just hidden by the
+    // effective-series trim), so keep <bos> + first token both visible.
+    const shown = noPrefix ? inputTokens : inputTokens.slice(0, -1);
+    if (shown.length === 0) {
+      inputSel.append('span').attr('class', 'pertok-empty').text('(no input tokens)');
+      return;
+    }
+    shown.forEach((tok, i) => {
+      // data-base-title holds the untouched hover text; paintTokenLevel reads
+      // from here and appends influence values, so repeated paints don't
+      // accumulate stale suffixes.
+      const baseTitle = `index ${i}: input token (prefix, no per-token graph)`;
+      const chip = inputSel.append('span')
+        .attr('class', 'pertok-tok input')
+        .attr('data-tpos', i)
+        .attr('data-base-title', baseTitle)
+        .attr('title', baseTitle);
       chip.append('span').attr('class', 'pertok-pos').text(i);
-      chip.append('span').text(tok === '' ? '·' : tok);
-      if (hasGraph) {
-        chip.on('click', () => {
-          clickedPos = i;
-          visState.slug = slugByPos[i];
-          visState.clickedId = undefined;
-          util.params.set('clickedPos', String(i));
-          util.params.set('clickedId', null);
-          renderStrip();
-          renderGraph();
-        });
-      }
+      chip.append('span').attr('class', 'pertok-tok-text').text(tok === '' ? '·' : tok);
     });
   }
 
-  function renderGraph() {
-    const m = all.find(g => g.slug === visState.slug);
-    if (!m) return;
-
-    if (typeof m.node_threshold === 'number' && visState.pruningThreshold === undefined) {
-      visState.pruningThreshold = parseFloat(util.params.get('pruningThreshold')) || m.node_threshold;
+  function renderOutputStrip() {
+    outputSel.html('');
+    const outputEntries = series
+      .map(g => ({pos: g.pos, tok: g.meta.target_tokens && g.meta.target_tokens[0]}))
+      .filter(e => e.tok !== undefined);
+    if (outputEntries.length === 0) {
+      outputSel.append('span').attr('class', 'pertok-empty')
+        .text('(no output tokens in metadata)');
+      return;
     }
-
-    d3.select('.cg').html('');
-    const options = {
-      clickedId: visState.clickedId,
-      clickedIdCb: id => util.params.set('clickedId', id),
-      isGridsnap: visState.isGridsnap || true,
-    };
-    if (visState.pruningThreshold !== undefined) options.pruningThreshold = visState.pruningThreshold;
-    initCg(d3.select('.cg'), visState.slug, options);
-
-    document.title = `Per-token: ${currentBase} pos${clickedPos} → ${m.target_tokens && m.target_tokens[0] || ''}`;
+    outputEntries.forEach(({pos: i, tok}) => {
+      const isSel = i === clickedPos;
+      const baseTitle = `pos${String(i).padStart(3, '0')}: target=${JSON.stringify(tok)}, prefix length=${i}`;
+      const chip = outputSel.append('span')
+        .attr('class', 'pertok-tok output' + (isSel ? ' selected' : ''))
+        .attr('data-tpos', i)
+        .attr('data-base-title', baseTitle)
+        .attr('title', baseTitle);
+      chip.append('span').attr('class', 'pertok-pos').text(i);
+      chip.append('span').attr('class', 'pertok-tok-text').text(tok === '' ? '·' : tok);
+      chip.on('click', () => {
+        clickedPos = i;
+        visState.slug = effectiveSlug(slugByPos[i]);
+        visState.clickedId = undefined;
+        visState.pruningThreshold = undefined;
+        util.params.set('clickedPos', String(i));
+        util.params.set('clickedId', null);
+        renderOutputStrip();
+        showGraphForPos(clickedPos);
+        paintTokenLevel();
+      });
+    });
   }
 
-  renderStrip();
-  renderGraph();
+  // One .cg-instance per output position, all mounted eagerly at init so
+  // switching between them is just a CSS class toggle (no re-render, no
+  // re-fetch). Non-current instances are hidden via .cg-hidden which applies
+  // visibility:hidden + pointer-events:none so they keep their layout
+  // dimensions but are invisible and unclickable.
+  const cgStack = d3.select('.cg-stack');
+  const cgByPos = {};  // pos -> {sel}
+
+  function setupAllGraphs() {
+    series.forEach(g => {
+      const pos = g.pos;
+      const sel = cgStack.append('div')
+        .attr('class', 'cg cg-instance' + (pos === clickedPos ? '' : ' cg-hidden'))
+        .attr('data-pos', pos);
+      cgByPos[pos] = {sel};
+      const m = all.find(x => x.slug === g.meta.slug);
+      const options = {
+        clickedId: null,
+        clickedIdCb: id => util.params.set('clickedId', id),
+        isGridsnap: true,
+      };
+      if (m && typeof m.node_threshold === 'number') {
+        options.pruningThreshold = m.node_threshold;
+      }
+      initCg(sel, effectiveSlug(g.meta.slug), options);
+    });
+  }
+
+  function showGraphForPos(pos) {
+    Object.entries(cgByPos).forEach(([p, e]) => {
+      e.sel.classed('cg-hidden', parseInt(p, 10) !== pos);
+    });
+    const m = all.find(x => x.slug === slugByPos[pos]);
+    document.title = `Per-token: ${currentBase} pos${pos} → ${
+      m && m.target_tokens && m.target_tokens[0] || ''}`;
+  }
+
+  // tokenByPos: output position -> target token string. Used by the graph
+  // renderer to label extra x-axis columns for output positions beyond the
+  // current graph's prefix.
+  const tokenByPos = {};
+  for (const g of series) {
+    const tt = g.meta.target_tokens;
+    if (tt && tt.length > 0) tokenByPos[g.pos] = tt[0];
+  }
+
+  // Expose context for the attribution graph renderer so its x-axis
+  // (a) covers every output position (not just the current prefix),
+  // (b) labels input/prior-output/future-output differently, and
+  // (c) navigates between per-token graphs on click. Gated on pertok.html
+  // being the entry point — other views (regress/index) never set this
+  // global, so init-cg-link-graph.js keeps its original behavior there.
+  window.pertokCtx = {
+    inputEndIdx: inputTokens.length,
+    slugByPos: slugByPos,
+    tokenByPos: tokenByPos,
+    get clickedPos() { return clickedPos; },
+    onTokenClick: (pos) => {
+      if (slugByPos[pos] === undefined) return;
+      clickedPos = pos;
+      visState.slug = effectiveSlug(slugByPos[pos]);
+      visState.clickedId = undefined;
+      visState.pruningThreshold = undefined;
+      util.params.set('clickedPos', String(pos));
+      util.params.set('clickedId', null);
+      renderOutputStrip();
+      renderGraph();
+      paintTokenLevel();
+    },
+  };
+
+  // Drives the abstraction-scoped CSS rules above (hide .cg-stack, uniform
+  // chip footprint). Abstraction changes trigger a full reload, so this only
+  // needs to be set once per page.
+  document.body.setAttribute('data-abstraction', currentAbstraction);
+
+  renderInputStrip();
+  renderOutputStrip();
+  // Only mount the full attribution-graph panel for the default view. For any
+  // abstraction we hide that panel anyway (see CSS), and skipping the mount
+  // avoids loading an abstracted JSON into the full-graph renderer (which is
+  // designed for the unabstracted node set). showGraphForPos below only
+  // touches cgByPos + document.title, so it's harmless when cgByPos is empty.
+  if (currentAbstraction === 'none') {
+    setupAllGraphs();
+  }
+  showGraphForPos(clickedPos);
+  // Preload token_level influences (no-op for other abstractions) and paint
+  // the highlights once they're in. The paint is idempotent and gets called
+  // again on every chip click / knob tweak.
+  preloadTokenLevel().then(paintTokenLevel);
 };
 
 window.init();

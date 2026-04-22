@@ -146,6 +146,17 @@ def main():
             "first token of --prompt that is NOT inside --prefix_prompt."
         ),
     )
+    attr_parser.add_argument(
+        "--abstractions",
+        nargs="+",
+        default=["none"],
+        help=(
+            "Graph abstractions to emit alongside the default graph. 'none' is "
+            "always included. Extra abstractions are written as "
+            "{slug}__{abstraction}.json. Pertok UI exposes these via a dropdown. "
+            "Supported: none, token_level."
+        ),
+    )
 
     # Server arguments
     attr_parser.add_argument(
@@ -226,6 +237,16 @@ def run_attribution(args, parser):
             )
     if args.prefix_prompt is not None and not args.per_token:
         parser.error("--prefix_prompt is only valid together with --per_token.")
+
+    if args.abstractions:
+        from circuit_tracer.utils import abstractions as abstractions_mod
+
+        valid = set(abstractions_mod.available())
+        bad = [a for a in args.abstractions if a not in valid]
+        if bad:
+            parser.error(
+                f"unknown --abstractions values: {bad}; available: {sorted(valid)}"
+            )
 
     # Ensure graph output directory exists if needed
     if create_graph_files_enabled:
@@ -309,9 +330,9 @@ def run_attribution(args, parser):
             )
         logging.info(
             f"Running per-token attribution over {n - start_i} positions "
-            f"(i={start_i}..{n - 1})"
+            f"(i={n - 1}..{start_i}, reverse order: last target first)"
         )
-        for i in range(start_i, n):
+        for i in range(n - 1, start_i - 1, -1):
             prefix_ids = input_ids[:i]
             target_id = input_ids[i : i + 1]
             target_str = model_instance.tokenizer.decode(target_id.tolist())
@@ -330,6 +351,10 @@ def run_attribution(args, parser):
                 max_feature_nodes=args.max_feature_nodes,
             )
             per_slug = f"{args.slug}-pos{i:03d}"
+            if os.environ.get("CT_WRITE_PT", "1") != "0":
+                pt_path = os.path.join(args.graph_file_dir, f"{per_slug}.pt")
+                logging.info(f"Saving graph to {pt_path}")
+                graph.to_pt(pt_path)
             logging.info(f"Creating graph files with slug: {per_slug}")
             create_graph_files(
                 graph_or_path=graph,
@@ -338,8 +363,9 @@ def run_attribution(args, parser):
                 output_path=args.graph_file_dir,
                 node_threshold=args.node_threshold,
                 edge_threshold=args.edge_threshold,
+                abstractions=args.abstractions,
             )
-        logging.info(f"Per-token graph JSON files written to {args.graph_file_dir}")
+        logging.info(f"Per-token graph files (.pt + JSON) written to {args.graph_file_dir}")
     else:
         logging.info("Running attribution...")
         graph = attribute(
@@ -368,6 +394,7 @@ def run_attribution(args, parser):
                 output_path=args.graph_file_dir,
                 node_threshold=args.node_threshold,
                 edge_threshold=args.edge_threshold,
+                abstractions=args.abstractions,
             )
             logging.info(f"Graph JSON files written to {args.graph_file_dir}")
 

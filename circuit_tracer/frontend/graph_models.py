@@ -10,6 +10,13 @@ class Metadata(BaseModel):
     node_threshold: float | None = None
     schema_version: int | None = 1
     target_tokens: list[str] | None = None
+    # For pertok: names of abstractions emitted alongside the base graph, always
+    # starting with "none". Absent/empty means only the default graph is present.
+    abstractions: list[str] | None = None
+    # Per-file tag identifying which abstraction this particular JSON represents
+    # ("none" for the base graph). The sibling list lives on the graph-metadata
+    # entry under ``abstractions``.
+    abstraction: str | None = None
 
 
 class QParams(BaseModel):

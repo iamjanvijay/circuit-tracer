@@ -74,6 +74,33 @@ save_transcoders_to_cache(hf_ref, cache_dir=cache_dir)
 
 You can also empty the cache using `circuit_tracer.utils.caching.empty_cache`.
 
+### Graph Abstractions (per-token views)
+
+Per-token attribution runs can emit higher-level *abstractions* of the full graph alongside the default output. Abstractions are computed at dump time, so each one is just an extra JSON file; the base graph stays byte-compatible with readers that don't know about abstractions.
+
+Pass `--abstractions` to `circuit-tracer attribute` with one or more names. `none` is always emitted (it's the default graph); additional names are written as `{slug}__{name}.json` in the same directory.
+
+```
+circuit-tracer attribute --per_token --abstractions none token_level \
+    --prompt "..." --slug my-run --graph_file_dir ./graph_files --transcoder_set gemma
+```
+
+Each entry in `graph-metadata.json` gains an `abstractions: [...]` field. `pertok.html` picks this up and shows an **abstraction** dropdown next to the base-slug selector; switching it reloads the page with the chosen abstraction (`?abstraction=…`). Absent/empty → only `none` is available.
+
+**Available abstractions**
+
+- `none` — the default attribution graph (all feature / error / token / logit nodes and pruned edges).
+- `token_level` — restricts focus to token nodes. Keeps only token nodes and the target logit; synthesizes one direct edge per token → target logit, weighted by the token's `raw_influence` (the path-aggregated contribution already computed by the power-series influence in `graph.py`). On each token node: `raw_influence` is kept as-is; `influence` is **recomputed over the token set only** as the cumulative rank share — tokens are sorted by `|raw_influence|` descending, and each token's `influence` = Σ of `|raw|` up to its rank / total, ∈ [0, 1]. Answers: *which input position drove the generated token?* at a glance.
+
+When `token_level` is active, `pertok.html` exposes three **visualization knobs** (UI-only, same underlying JSON) for highlighting the prefix input-token chips on the input / output strips:
+
+- All three views show a small `r=<raw_influence> c=<cum%>` badge on each painted chip (full precision in the hover tooltip). `c` is the token-only cumulative share (see `token_level` above).
+- `heatmap` (default) — tint every prefix chip; darker = higher `|raw_influence|`.
+- `top-k` — highlight only the `k` most influential prefix chips (rank badge + tint); fade the rest. `k` is a live-editable input.
+- `top-p%` — highlight the smallest set of prefix chips whose cumulative `|raw_influence|` covers `p%` of the total; fade the rest. `p` is a live-editable input.
+
+Knob selection + `k` / `p` persist via URL (`?tlView=`, `?tlK=`, `?tlP=`) and repaint on change — no reload.
+
 ## Command-Line Interface
 
 The unified CLI performs the complete 3-step process for finding and visualizing circuits:

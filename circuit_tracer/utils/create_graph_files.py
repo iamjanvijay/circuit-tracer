@@ -175,9 +175,11 @@ def create_graph_files(
     scan=None,
     node_threshold=0.8,
     edge_threshold=0.98,
+    abstractions=None,
 ):
     # Import Graph/prune_graph locally to avoid circular import at module import time
     from circuit_tracer.graph import Graph, prune_graph
+    from circuit_tracer.utils import abstractions as abstractions_mod
 
     total_start_time = time.time()
 
@@ -199,6 +201,13 @@ def create_graph_files(
             )
         scan = graph.scan
 
+    # Normalize abstractions: always include "none" first, preserve order, dedupe.
+    requested = list(abstractions) if abstractions else []
+    ordered: list[str] = [abstractions_mod.NONE]
+    for a in requested:
+        if a != abstractions_mod.NONE and a not in ordered:
+            ordered.append(a)
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     graph.to(device)
     node_mask, edge_mask, cumulative_scores, raw_influence = (
@@ -209,13 +218,22 @@ def create_graph_files(
     tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
     nodes = create_nodes(graph, node_mask, tokenizer, cumulative_scores, raw_influence)
     used_nodes, used_edges = create_used_nodes_and_edges(graph, nodes, edge_mask)
-    model = build_model(graph, used_nodes, used_edges, slug, scan, node_threshold, tokenizer)
+    base_model = build_model(graph, used_nodes, used_edges, slug, scan, node_threshold, tokenizer)
 
-    # Write the output locally
-    with open(os.path.join(output_path, f"{slug}.json"), "w") as f:
-        f.write(model.model_dump_json(indent=2))
-    add_graph_metadata(model.metadata.model_dump(), output_path)
-    logger.info(f"Graph data written to {output_path}")
+    # Emit one JSON per abstraction. Base ("none") uses bare slug to stay
+    # byte-compatible with readers that don't know about abstractions.
+    for name in ordered:
+        m = abstractions_mod.apply(base_model, name)
+        fname = f"{slug}.json" if name == abstractions_mod.NONE else f"{slug}__{name}.json"
+        with open(os.path.join(output_path, fname), "w") as f:
+            f.write(m.model_dump_json(indent=2))
+
+    # Single metadata entry per slug, listing all abstractions available for it.
+    meta = base_model.metadata.model_dump()
+    meta["abstractions"] = ordered
+    meta.pop("abstraction", None)
+    add_graph_metadata(meta, output_path)
+    logger.info(f"Graph data written to {output_path} (abstractions: {ordered})")
 
     total_time_ms = (time.time() - total_start_time) * 1000
     logger.info(f"Total execution time: {total_time_ms=:.2f} ms")

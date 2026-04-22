@@ -19,7 +19,8 @@ window.initCgLinkGraph = function({visState, renderAll, data, cgSel}){
   // Count max number of nodes at each context to create a polylinear x scale
   var earliestCtxWithNodes = d3.min(nodes, d => d.ctx_idx)
   var cumsum = 0
-  var ctxCounts = d3.range(d3.max(nodes, d => d.ctx_idx) + 1).map(ctx_idx => {
+  var origMaxCtx = d3.max(nodes, d => d.ctx_idx)
+  var ctxCounts = d3.range(origMaxCtx + 1).map(ctx_idx => {
     if (ctx_idx >= earliestCtxWithNodes) {
       var group = nodes.filter(d => d.ctx_idx === ctx_idx)
       var maxCount = d3.max([1, d3.max(d3.nestBy(group, d => d.streamIdx), e => e.length)])
@@ -28,9 +29,34 @@ window.initCgLinkGraph = function({visState, renderAll, data, cgSel}){
     return {ctx_idx, maxCount, cumsum}
   })
 
-  var xDomain = [-1].concat(ctxCounts.map(d => d.ctx_idx))
-  var xRange = [0].concat(ctxCounts.map(d => d.cumsum * c.width / cumsum))
-  c.x = d3.scaleLinear().domain(xDomain.map(d => d + 1)).range(xRange)
+  // When pertok.html is the entry point (window.pertokCtx set), use a fixed
+  // equal-width x-scale covering every output position in the series. All
+  // per-token graphs share the same ctx_idx -> x mapping, so tokens stay at
+  // the same horizontal position when the user switches between graphs.
+  // Ticks still get labels/input-output classes/click handlers further below.
+  // Other views (regress/index) don't set this global, so behavior there is
+  // unchanged.
+  var pertokCtx = window.pertokCtx || null
+  var postPrefixPositions = []  // output positions not in this graph's prompt_tokens
+                                // (= current target + all future output positions),
+                                // excluding the very last position (no graph attributes
+                                // to anything after it, so it has no clickable successor).
+  var maxPosOverall = null
+  if (pertokCtx) {
+    var prefixLen = data.metadata.prompt_tokens.length
+    var slugPositions = Object.keys(pertokCtx.slugByPos).map(Number).sort((a, b) => a - b)
+    maxPosOverall = slugPositions.length ? d3.max(slugPositions) : null
+    postPrefixPositions = slugPositions.filter(p => p >= prefixLen && p !== maxPosOverall)
+  }
+
+  if (pertokCtx) {
+    var totalSlots = Math.max(origMaxCtx + 1, (maxPosOverall !== null ? maxPosOverall : origMaxCtx + 1))
+    c.x = d3.scaleLinear().domain([0, totalSlots]).range([0, c.width])
+  } else {
+    var xDomain = [-1].concat(ctxCounts.map(d => d.ctx_idx))
+    var xRange = [0].concat(ctxCounts.map(d => d.cumsum * c.width / cumsum))
+    c.x = d3.scaleLinear().domain(xDomain.map(d => d + 1)).range(xRange)
+  }
   
   // TODO: why this was here?
   // var yNumTicks= visState.isHideLayer ? data.byStream.length : 19 
@@ -257,23 +283,34 @@ window.initCgLinkGraph = function({visState, renderAll, data, cgSel}){
 
   // Add x axis text/lines
   var promptTicks = data.metadata.prompt_tokens.slice(earliestCtxWithNodes).map((token, i) =>{
-    var ctx_idx = i + earliestCtxWithNodes 
+    var ctx_idx = i + earliestCtxWithNodes
     var mNodes = nodes.filter(d => d.ctx_idx == ctx_idx)
     var hasEmbed = mNodes.some(d => d.feature_type == 'embedding')
     return {token, ctx_idx, mNodes, hasEmbed}
   })
+  // In per-token mode, append tick-only entries for every output position
+  // not already in prompt_tokens: the current target itself and all future
+  // outputs. Each gets a visible, clickable slot on the x-axis.
+  if (pertokCtx && postPrefixPositions.length) {
+    postPrefixPositions.forEach(ctx_idx => {
+      var token = pertokCtx.tokenByPos[ctx_idx]
+      if (token === undefined) return
+      promptTicks.push({token, ctx_idx, mNodes: [], hasEmbed: false})
+    })
+  }
 
   var xTickSel = c.svgBot.appendMany('g.prompt-token', promptTicks)
     .translate(d => [c.x(d.ctx_idx + 1), c.height])
-  
+
   xTickSel.append('path').at({d: `M0,0v${-c.height}`, stroke: '#fff',strokeWidth: 1})
   xTickSel.filter(d => d.hasEmbed).append('path').at({
     stroke: '#B0AEA6',
     d: `M-${padR + 3.5},${-c.y.bandwidth()/2 + 6}V${8}`,
   })
-  
-  xTickSel.filter(d => d.hasEmbed).append('g').translate([-12, 8])
-    .append('text').text(d => d.token) 
+
+  var labelHostSel = pertokCtx ? xTickSel : xTickSel.filter(d => d.hasEmbed)
+  var labelSel = labelHostSel.append('g').translate([-12, 8])
+  labelSel.append('text').text(d => d.token)
     .at({
       x: -5,
       y: 2,
@@ -283,6 +320,26 @@ window.initCgLinkGraph = function({visState, renderAll, data, cgSel}){
       fontSize: 12,
       // fontSize: (d, i) => c.x(i+1) - c.x(i) < 15 ? 9 : 14,
     })
+
+  if (pertokCtx) {
+    // Each graph is about one specific target token at ctx_idx == prefixLen
+    // (the first position not in prompt_tokens). All graphs are mounted
+    // simultaneously; each highlights its own target, not the globally
+    // clicked pos.
+    var ownTargetCtx = data.metadata.prompt_tokens.length
+    labelSel
+      .classed('pertok-input', d => d.ctx_idx < pertokCtx.inputEndIdx)
+      .classed('pertok-output', d =>
+        d.ctx_idx >= pertokCtx.inputEndIdx && pertokCtx.slugByPos[d.ctx_idx] !== undefined)
+      .classed('pertok-selected', d => d.ctx_idx === ownTargetCtx)
+      .style('cursor', d =>
+        pertokCtx.slugByPos[d.ctx_idx] !== undefined ? 'pointer' : 'default')
+      .on('click', (ev, d) => {
+        if (pertokCtx.slugByPos[d.ctx_idx] === undefined) return
+        ev.stopPropagation()
+        pertokCtx.onTokenClick(d.ctx_idx)
+      })
+  }
   
   var logitTickSel = c.svgBot.append('g.axis').appendMany('g', nodes.filter(d => d.feature_type == 'logit'))
     .translate(d => d.pos)
