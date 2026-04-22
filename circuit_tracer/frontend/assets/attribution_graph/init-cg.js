@@ -1,5 +1,18 @@
 window.initCg = async function (sel, slug, {clickedId, clickedIdCb, isModal, isGridsnap, pruningThreshold} = {}){
   var data = await util.getFile(`./graph_data/${slug}.json`)
+
+  // Client-side edge cap: keep the top-P% of links by |weight| before
+  // rendering. Raw graphs can carry 1M+ edges; trimming to ~10% already
+  // preserves almost all visible mass and is ~10x cheaper for the browser.
+  // Override via URL: ?maxLinksPct=25 (0 = no edges, 100 = keep all).
+  var maxLinksPct = parseInt(new URLSearchParams(location.search).get('maxLinksPct') ?? '10', 10)
+  if (Number.isFinite(maxLinksPct) && maxLinksPct >= 0 && maxLinksPct < 100 && data.links && data.links.length > 0) {
+    var keepN = Math.max(0, Math.round(data.links.length * maxLinksPct / 100))
+    if (keepN < data.links.length) {
+      data.links.sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight))
+      data.links = data.links.slice(0, keepN)
+    }
+  }
   
   var visState = {
     pinnedIds: [],
@@ -17,7 +30,11 @@ window.initCg = async function (sel, slug, {clickedId, clickedIdCb, isModal, isG
     isHideLayer: data.metadata.scan == util.scanSlugToName.h35 || data.metadata.scan == util.scanSlugToName.moc,
     graphSchemaVersion: data.metadata?.schema_version || 0,
     sg_pos: '',
-    isModal: true,
+    // isModal is passed in from options; shorthand propagates the option
+    // value into visState instead of hardcoding `true`, which was forcing
+    // gridsnap into fill-container mode even in the embedded pertok layout
+    // (where the host container has no fixed height → grid collapses).
+    isModal,
     isGridsnap,
     slug: slug, // Store slug for localStorage keys
     pruningThreshold: pruningThreshold,
@@ -175,10 +192,14 @@ window.initCg = async function (sel, slug, {clickedId, clickedIdCb, isModal, isG
   function initGridsnap() {
     var gridData = [
       // {cur: {x: 0, y: 0,  w: 6, h: .5}, class: 'button-container'},
-      {cur: {x: 0, y: 8, w: 8, h: 8}, class: 'subgraph'},
-      {cur: {x: 8, y: 1, w: 6, h: 6}, class: 'node-connections'},
-      {cur: {x: 8, y: 6, w: 6, h: 10}, class: 'feature-detail'},
-      {cur: {x: 0, y: 0, w: 8, h: 8}, class: 'link-graph', resizeFn: makeResizeFn(initCgLinkGraph)},
+      // Link graph spans the full 14-column width by default. Subgraph goes
+      // below it (also full width). Node-connections + feature-detail live
+      // further down, split into two columns. pertok.html's tab toggle can
+      // hide whichever set of panels isn't active.
+      {cur: {x: 0, y: 0,  w: 14, h: 14}, class: 'link-graph', resizeFn: makeResizeFn(initCgLinkGraph)},
+      {cur: {x: 0, y: 16, w: 14, h: 16}, class: 'subgraph'},
+      {cur: {x: 0, y: 32, w: 8,  h: 14}, class: 'node-connections'},
+      {cur: {x: 8, y: 32, w: 6,  h: 20}, class: 'feature-detail'},
       // {cur: {x: 0, y: 18, w: 6, h: 7}, class: 'clerp-list'},
       // {cur: {x: 6, y: 30, w: 4, h: 7}, class: 'feature-scatter'},
       // {cur: {x: 0, y: 30, w: 3, h: 8}, class: 'metadata'},
@@ -201,12 +222,15 @@ window.initCg = async function (sel, slug, {clickedId, clickedIdCb, isModal, isG
     
     window.initGridsnap({
       gridData,
-      gridSizeY: 50,
+      gridSizeY: 60,
       pad: 10,
       sel: gridsnapSel,
       isFullScreenY: false,
       isFillContainer: visState.isModal,
-      serializedGrid: data.qParams.gridsnap
+      // serializedGrid intentionally omitted: each graph JSON ships with a
+      // stale gridsnap layout (h:8 for link-graph) that was baked at dump
+      // time. Honoring it here collapses the panel on load, overriding the
+      // tall default above. Drop it so gridData always wins.
     })
 
     initFns.forEach(fn => fn({visState, renderAll, data, cgSel: sel}))

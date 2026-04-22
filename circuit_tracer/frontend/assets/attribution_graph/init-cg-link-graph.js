@@ -3,7 +3,10 @@ window.initCgLinkGraph = function({visState, renderAll, data, cgSel}){
 
   var c = d3.conventions({
     sel: cgSel.select('.link-graph').html(''),
-    margin: {left: visState.isHideLayer ? 0 : 30, bottom: 85},
+    // bottom: room for the rotated input-token labels (longer tokens project
+    // ~100-120px diagonally). top: room for the logit labels that render
+    // above the highest-layer nodes.
+    margin: {left: visState.isHideLayer ? 0 : 30, bottom: 140, top: 40, right: 20},
     layers: 'sccccs',
   })
   
@@ -50,7 +53,12 @@ window.initCgLinkGraph = function({visState, renderAll, data, cgSel}){
   }
 
   if (pertokCtx) {
-    var totalSlots = Math.max(origMaxCtx + 1, (maxPosOverall !== null ? maxPosOverall : origMaxCtx + 1))
+    // Shared x-scale across every graph in the series so the axis (layers,
+    // embeddings, token positions) stays fixed as the user clicks between
+    // output tokens. totalSlots is anchored to the widest graph (the final
+    // output position) plus one, so earlier graphs keep identical x coords
+    // and simply have empty space on the right beyond their own target.
+    var totalSlots = (maxPosOverall !== null ? maxPosOverall + 1 : origMaxCtx + 1)
     c.x = d3.scaleLinear().domain([0, totalSlots]).range([0, c.width])
   } else {
     var xDomain = [-1].concat(ctxCounts.map(d => d.ctx_idx))

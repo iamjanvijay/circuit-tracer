@@ -1,17 +1,45 @@
 <!DOCTYPE html>
 <meta charset='utf-8'>
-<meta name='viewport' content='width=1000, initial-scale=1'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
 <link rel='stylesheet' href='./style.css'>
-<title>Per-token Attribution Graphs</title>
+<title>Reasoning Circuits</title>
 
 <style>
   .pertok-bar {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 10px 4px 14px 4px;
-    border-bottom: 1px solid #e0e0e0;
+    padding: 8px 12px 10px 12px;
+    border-bottom: 1px solid #e0e5eb;
+    background: #fafbfc;
+    transition: padding 0.2s ease;
   }
+  .pertok-bar.collapsed {
+    padding-bottom: 6px;
+  }
+  .pertok-bar.collapsed .pertok-row,
+  .pertok-bar.collapsed .tl-controls,
+  .pertok-bar.collapsed .header-row .help {
+    display: none;
+  }
+  .pertok-collapse {
+    background: transparent;
+    border: 1px solid #cfd5dc;
+    border-radius: 4px;
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+    color: #4a5561;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .pertok-collapse:hover { background: #eef2f6; }
+  .pertok-collapse .caret { transition: transform 0.2s ease; display: inline-block; }
+  .pertok-bar.collapsed .pertok-collapse .caret { transform: rotate(-90deg); }
   .pertok-bar .header-row {
     display: flex;
     align-items: center;
@@ -25,6 +53,31 @@
   .pertok-bar .help {
     color: #666;
     font-size: 12px;
+  }
+  .region-picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #4a5561;
+  }
+  .region-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 6px;
+    border: 1px solid #d0d5db;
+    border-radius: 3px;
+    background: #fff;
+    cursor: pointer;
+  }
+  .region-chip input[type='color'] {
+    width: 20px;
+    height: 18px;
+    border: none;
+    padding: 0;
+    background: transparent;
+    cursor: pointer;
   }
   .pertok-row {
     display: flex;
@@ -53,21 +106,110 @@
     flex: 1 1 auto;
   }
   .pertok-tok {
-    padding: 3px 7px;
+    padding: 0px 4px;
     border: 1px solid #cfd5dc;
-    border-radius: 4px;
+    border-radius: 3px;
     background: #f7f9fb;
     cursor: pointer;
     white-space: pre;
     user-select: none;
+    font-size: 12px;
+    line-height: 1.35;
   }
+  .pertok-strip { gap: 2px; }
+
+  /* Tab bar for switching between main graph and subgraph/feature panels. */
+  .cg-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 6px 12px 0 12px;
+    border-bottom: 1px solid #e0e5eb;
+    background: #fafbfc;
+  }
+  .cg-tab {
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    padding: 5px 12px;
+    cursor: pointer;
+    font: 13px system-ui, -apple-system, sans-serif;
+    color: #4a5561;
+    border-radius: 4px 4px 0 0;
+  }
+  .cg-tab:hover { background: #eef2f6; }
+  .cg-tab.active {
+    background: #fff;
+    border-color: #e0e5eb;
+    color: #1a1f26;
+    font-weight: 600;
+    margin-bottom: -1px;
+  }
+  /* Push the max-edges knob to the right end of the tab bar. */
+  .cg-tabs { align-items: center; }
+  .cg-tab-knob {
+    margin-left: auto;
+    padding-right: 4px;
+    font: 12px system-ui, -apple-system, sans-serif;
+    color: #4a5561;
+  }
+  .cg-tab-knob select { padding: 2px 4px; font-size: 12px; }
+  /* max-edges cap only applies to the link-graph, so hide the knob on Token Abs. */
+  body[data-abstraction]:not([data-abstraction='none']) .cg-tab-knob { display: none; }
+
+  /* Token Abs histogram: same footprint as link-graph (full width, tall).
+     Dimensions are fixed so clicking different output tokens doesn't
+     resize the chart. */
+  .tl-histogram-area { display: none; }
+  body[data-abstraction='token_level'] .tl-histogram-area {
+    display: block;
+    padding: 10px 16px 16px;
+    height: 720px;
+    box-sizing: border-box;
+  }
+  .tl-histogram-area svg { width: 100%; height: 100%; display: block; }
+  .tl-histogram-area .bar { fill: #2965cc; }
+  .tl-histogram-area .bar.neg { fill: #cc2929; }
+  .tl-histogram-area .bar:hover { fill: #ff8c00; }
+  .tl-histogram-area .axis text { font: 11px ui-monospace, Menlo, monospace; fill: #4a5561; }
+  .tl-histogram-area .axis path,
+  .tl-histogram-area .axis line { stroke: #c8cfd6; }
+  .tl-histogram-area .title {
+    font: 13px system-ui, sans-serif;
+    color: #1a1f26;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  /* Graph tab = default view (link-graph + subgraph + features, all visible).
+     Token Abs tab = same as abstraction=token_level (CSS above hides .cg-stack
+     and paints the token strips). Tabs just toggle `?abstraction=` and
+     reload; the existing data-abstraction body attribute does the work. */
+
+
+  /* Custom hover tooltip for tokens — fast (no native-title delay). */
+  .tooltip {
+    position: fixed;
+    z-index: 10000;
+    background: rgba(25, 30, 38, 0.96);
+    color: #f0f3f7;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+    pointer-events: none;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    max-width: 520px;
+    white-space: pre-wrap;
+  }
+  .tooltip.tooltip-hidden { display: none; }
+  .tooltip > div + div { margin-top: 2px; opacity: 0.9; }
   .pertok-tok.output:hover {
     background: #eef3f8;
   }
   .pertok-tok.selected {
-    background: #2965cc;
+    background: #0b2a63;
     color: #fff;
-    border-color: #2965cc;
+    border-color: #0b2a63;
+    font-weight: 600;
+    box-shadow: 0 0 0 2px rgba(11, 42, 99, 0.25);
   }
   .pertok-tok.input {
     cursor: default;
@@ -86,10 +228,7 @@
     padding: 6px 2px;
   }
   .pertok-pos {
-    font-size: 10px;
-    color: #99a;
-    margin-right: 2px;
-    vertical-align: super;
+    display: none;
   }
   .pertok-tok.selected .pertok-pos {
     color: #cfd9ee;
@@ -118,18 +257,16 @@
      display:none) keeps the hidden instances laid out so their dimensions
      remain valid; pointer-events:none makes them non-clickable. */
   .cg-stack {
-    display: grid;
-    grid-template-columns: 1fr;
+    position: relative;
   }
   .cg-stack > .cg-instance {
-    grid-column: 1;
-    grid-row: 1;
-    min-width: 0;
-    min-height: 0;
+    width: 100%;
   }
+  /* Hidden instances are removed from layout entirely so the visible
+     instance's height drives the page — grid-based stacking collapsed to
+     the shortest (empty/uninitialized) instance under lazy rendering. */
   .cg-instance.cg-hidden {
-    visibility: hidden;
-    pointer-events: none;
+    display: none;
   }
   /* Token-level abstraction: chip highlighting driven by the knob controls.
      paintTokenLevel() sets the chip background via inline style using
@@ -246,15 +383,26 @@
 </style>
 
 <div class='tooltip tooltip-hidden'></div>
-<div class='pertok-bar'>
+<div class='pertok-bar' id='pertok-bar'>
   <div class='header-row'>
-    <strong>Per-token attribution</strong>
-    <label>base slug:
+    <button class='pertok-collapse' id='pertok-collapse'
+      title='Show / hide the input + output token strips' aria-expanded='true'>
+      <span class='caret'>▾</span>
+    </button>
+    <strong>Reasoning Circuits</strong>
+    <label>example:
       <select id='base-select'></select>
     </label>
     <label>abstraction:
       <select id='abstraction-select'></select>
     </label>
+    <span class='region-picker' title='Background color per token region in the graph plot area.'>
+      regions:
+      <label class='region-chip'><input type='color' data-region='special'   value='#f5f4ee'> special</label>
+      <label class='region-chip'><input type='color' data-region='question'  value='#e6efff'> question</label>
+      <label class='region-chip'><input type='color' data-region='reason'    value='#ecf7e3'> reason</label>
+      <label class='region-chip'><input type='color' data-region='response'  value='#ffe8e0'> response</label>
+    </span>
     <span class='help'>Click any output token to load the attribution graph that produced it from the prefix on its left.</span>
   </div>
   <div class='header-row tl-controls' id='tl-controls' style='display:none'>
@@ -279,7 +427,24 @@
     <div class='pertok-strip' id='output-strip'></div>
   </div>
 </div>
+<div class='cg-tabs' id='cg-tabs'>
+  <button class='cg-tab' data-cg-tab='graph' data-abs='none'>Graph</button>
+  <button class='cg-tab' data-cg-tab='tokenabs' data-abs='token_level'>Token Abs</button>
+  <label class='cg-tab-knob' title='Keep this fraction of each graph&apos;s top-|weight| edges before rendering. Smaller = faster; 100% = no cap.'>
+    max edges:
+    <select id='max-links-pct'>
+      <option value='0'>0% (none)</option>
+      <option value='5'>5%</option>
+      <option value='10' selected>10%</option>
+      <option value='25'>25%</option>
+      <option value='50'>50%</option>
+      <option value='75'>75%</option>
+      <option value='100'>100% (all)</option>
+    </select>
+  </label>
+</div>
 <div class='cg-stack'></div>
+<div id='tl-histogram-area' class='tl-histogram-area'></div>
 
 <link rel='stylesheet' href='./attribution_graph/cg.css'>
 <link rel='stylesheet' href='./attribution_graph/gridsnap/gridsnap.css'>
@@ -452,6 +617,130 @@ window.init = async function(){
     }));
   }
 
+  // Token Abs histogram. Shape mirrors the link-graph footprint (same
+  // container width, tall). X-axis covers every input position from 0 to
+  // maxPosOverall (same extent as the link-graph's shared x-scale), so the
+  // axis stays static across clicks. Y-axis is % of |raw_influence| among
+  // all prefix contributors for the clicked output token.
+  function renderTokenHistogram() {
+    const hostEl = document.getElementById('tl-histogram-area');
+    if (!hostEl) return;
+    hostEl.innerHTML = '';
+    if (currentAbstraction !== 'token_level') return;
+
+    const entries = tlInfByPos[clickedPos] || [];
+    const prefix = entries.filter(t => t.pos < clickedPos);
+    // Rank all contributors by |raw| descending; map pos -> rank.
+    const ranked = [...prefix].sort((a, b) => Math.abs(b.raw) - Math.abs(a.raw));
+    const rankByPos = new Map(ranked.map((d, i) => [d.pos, i + 1]));
+    const totalMag = d3.sum(prefix, d => Math.abs(d.raw)) || 1;
+    const byPos = new Map(prefix.map(d => [d.pos, d]));
+
+    // Title, updated per click but in a fixed-height slot so the chart
+    // dimensions don't reflow.
+    const header = document.createElement('div');
+    header.className = 'title';
+    const tgt = tokenByPos[clickedPos];
+    header.textContent =
+      `pos ${clickedPos}  →  ${JSON.stringify(tgt ?? '')}` +
+      `   (${prefix.length} prefix contributors)`;
+    hostEl.appendChild(header);
+
+    // Fixed axis domain: [0, maxPosOverall+1) — identical extent across all
+    // clicks, matching the link-graph's shared x-scale (see pertokCtx).
+    const maxPos = d3.max(Object.keys(slugByPos), d => +d) ?? 0;
+    const widthPx = hostEl.clientWidth || 1200;
+    const totalHeight = hostEl.clientHeight - 30;  // minus header
+    const margin = {top: 10, right: 20, bottom: 120, left: 60};
+    const w = Math.max(100, widthPx - margin.left - margin.right);
+    const h = Math.max(100, totalHeight - margin.top - margin.bottom);
+
+    const host = d3.select(hostEl);
+    const svg = host.append('svg');
+    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+    const x = d3.scaleBand()
+      .domain(d3.range(maxPos + 1))
+      .range([0, w])
+      .padding(0.05);
+    // Y is percentage share; max 100% so axis is fixed across clicks.
+    const y = d3.scaleLinear().domain([0, 100]).range([h, 0]);
+
+    // Background stripe for the current prefix range (0..clickedPos-1).
+    g.append('rect')
+      .attr('x', x(0))
+      .attr('y', 0)
+      .attr('width', x(clickedPos - 1) + x.bandwidth() - x(0))
+      .attr('height', h)
+      .attr('fill', '#f7f9fb');
+
+    // One bar per input position in the full x-domain; the ones without a
+    // contribution render with zero height (no visible bar).
+    const bars = g.selectAll('rect.bar').data(d3.range(maxPos + 1)).enter().append('rect')
+      .attr('class', pos => {
+        const d = byPos.get(pos);
+        return 'bar' + (d && d.raw < 0 ? ' neg' : '');
+      })
+      .attr('x', pos => x(pos))
+      .attr('y', pos => {
+        const d = byPos.get(pos);
+        return y(d ? Math.abs(d.raw) / totalMag * 100 : 0);
+      })
+      .attr('width', x.bandwidth())
+      .attr('height', pos => {
+        const d = byPos.get(pos);
+        const pct = d ? Math.abs(d.raw) / totalMag * 100 : 0;
+        return h - y(pct);
+      });
+
+    // Custom hover tooltip reusing the top-level .tooltip div — shows rank,
+    // raw influence, and the token at that position.
+    bars.on('mouseover', function(ev, pos) {
+      const d = byPos.get(pos);
+      const tok = fullTokens[pos] ?? '';
+      const lines = [`pos ${pos}  ${JSON.stringify(tok)}`];
+      if (d) {
+        lines.push(`rank = ${rankByPos.get(pos)} of ${prefix.length}`);
+        lines.push(`raw_influence = ${d.raw.toFixed(4)}`);
+        lines.push(`share = ${(Math.abs(d.raw)/totalMag*100).toFixed(2)}%`);
+      } else {
+        lines.push('(no contribution at this position)');
+      }
+      tooltipEl.innerHTML = lines.map(
+        s => `<div>${s.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</div>`
+      ).join('');
+      const r = this.getBoundingClientRect();
+      const maxLeft = window.innerWidth - tooltipEl.offsetWidth - 8;
+      tooltipEl.style.left = Math.max(8, Math.min(r.left, maxLeft)) + 'px';
+      tooltipEl.style.top = (r.top + r.height + 4) + 'px';
+      tooltipEl.classList.remove('tooltip-hidden');
+    }).on('mouseout', () => tooltipEl.classList.add('tooltip-hidden'));
+
+    // X axis: skip labels for density.
+    const tickStride = Math.max(1, Math.ceil((maxPos + 1) / 40));
+    const tickValues = d3.range(0, maxPos + 1, tickStride);
+    g.append('g').attr('class', 'axis')
+      .attr('transform', `translate(0,${h})`)
+      .call(d3.axisBottom(x).tickValues(tickValues).tickFormat(d => {
+        const tok = fullTokens[d] ?? '';
+        const short = tok.replace(/\n/g, '↵').replace(/\t/g, '⇥').slice(0, 10);
+        return `${d}:${short}`;
+      }))
+      .selectAll('text')
+      .attr('transform', 'rotate(-45)')
+      .style('text-anchor', 'end');
+
+    // Y axis: percentage.
+    g.append('g').attr('class', 'axis')
+      .call(d3.axisLeft(y).ticks(10).tickFormat(d => d + '%'));
+
+    g.append('text')
+      .attr('x', -margin.left + 10).attr('y', -2)
+      .style('font', '11px ui-monospace, Menlo, monospace')
+      .style('fill', '#4a5561')
+      .text('% share of |raw_influence|');
+  }
+
   function paintTokenLevel() {
     // Always reset first so toggling knobs / switching away cleans up state.
     // Restoring title from data-base-title also prevents tooltip-suffix
@@ -567,6 +856,8 @@ window.init = async function(){
         el.insertBefore(rank, el.firstChild);
       }
     });
+    // Draw/refresh the histogram in the Token Abs area.
+    renderTokenHistogram();
   }
 
   // Wire up the visualization-knob controls. All three inputs repaint live — no reload.
@@ -604,6 +895,111 @@ window.init = async function(){
       util.params.set('tlP', String(v));
       paintTokenLevel();
     }
+  });
+
+  // Collapse / expand the input + output token strips. State persists via
+  // URL (?strips=hidden) so it survives the abstraction-change reload.
+  const pertokBarEl = document.getElementById('pertok-bar');
+  const collapseBtn = document.getElementById('pertok-collapse');
+  if (util.params.get('strips') === 'hidden') {
+    pertokBarEl.classList.add('collapsed');
+    collapseBtn.setAttribute('aria-expanded', 'false');
+  }
+  collapseBtn.addEventListener('click', () => {
+    const nowCollapsed = !pertokBarEl.classList.contains('collapsed');
+    pertokBarEl.classList.toggle('collapsed', nowCollapsed);
+    collapseBtn.setAttribute('aria-expanded', nowCollapsed ? 'false' : 'true');
+    util.params.set('strips', nowCollapsed ? 'hidden' : null);
+  });
+
+  // Tab bar: switches abstraction in-place (no reload) so the top bar —
+  // collapse state, example selection, token strips — stays untouched.
+  const absDropdownLabel = document.querySelector('#abstraction-select')?.closest('label');
+  if (absDropdownLabel) absDropdownLabel.style.display = 'none';
+  document.querySelectorAll('#cg-tabs .cg-tab').forEach(btn => {
+    if (btn.dataset.abs === currentAbstraction) btn.classList.add('active');
+    btn.addEventListener('click', () => {
+      const abs = btn.dataset.abs;
+      if (abs === currentAbstraction) return;
+      currentAbstraction = abs;
+      util.params.set('abstraction', abs === 'none' ? null : abs);
+      util.params.set('clickedId', null);
+      if (abs !== 'token_level') {
+        util.params.set('tlView', null);
+        util.params.set('tlK', null);
+        util.params.set('tlP', null);
+      }
+      document.body.setAttribute('data-abstraction', abs);
+      document.querySelectorAll('#cg-tabs .cg-tab').forEach(b =>
+        b.classList.toggle('active', b.dataset.abs === abs));
+      // tl-controls visibility follows the abstraction.
+      tlCtrl.style.display = (abs === 'token_level') ? '' : 'none';
+      // The effectiveSlug depends on the abstraction; drop every cached cg
+      // instance so the next show re-fetches the correct JSON.
+      Object.values(cgByPos).forEach(e => { e.sel.html(''); e.initialized = false; });
+      visState.slug = effectiveSlug(slugByPos[clickedPos]);
+      if (abs === 'none') {
+        showGraphForPos(clickedPos);
+      }
+      // Entering Token Abs: preload + paint; leaving it: just clear paints.
+      if (abs === 'token_level') {
+        preloadTokenLevel().then(paintTokenLevel);
+      } else {
+        paintTokenLevel();
+      }
+    });
+  });
+
+  // Custom hover tooltip for tokens: uses the existing .tooltip div and
+  // reads each chip's `title` attribute, then suppresses the native title
+  // while visible (to avoid the browser's ~500ms delay + dual tooltip).
+  const tooltipEl = document.querySelector('.tooltip');
+  document.body.addEventListener('mouseover', (ev) => {
+    const tok = ev.target.closest('.pertok-tok');
+    if (!tok) return;
+    const title = tok.getAttribute('title') || tok.getAttribute('data-base-title') || '';
+    if (!title) return;
+    // Stash the original so we can restore on mouseout and keep later paints
+    // (tokenLevel) from accumulating suffixes.
+    if (tok.hasAttribute('title')) {
+      tok.dataset.origTitle = tok.getAttribute('title');
+      tok.removeAttribute('title');
+    }
+    tooltipEl.innerHTML = title.split(/\s*\|\s*/).map(
+      s => `<div>${s.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</div>`
+    ).join('');
+    const r = tok.getBoundingClientRect();
+    // Place tooltip just below the chip; clamp to viewport width.
+    const maxLeft = window.innerWidth - tooltipEl.offsetWidth - 8;
+    tooltipEl.style.left = Math.max(8, Math.min(r.left, maxLeft)) + 'px';
+    tooltipEl.style.top = (r.bottom + 4) + 'px';
+    tooltipEl.classList.remove('tooltip-hidden');
+  });
+  document.body.addEventListener('mouseout', (ev) => {
+    const tok = ev.target.closest('.pertok-tok');
+    if (!tok) return;
+    if (tok.dataset.origTitle !== undefined) {
+      tok.setAttribute('title', tok.dataset.origTitle);
+      delete tok.dataset.origTitle;
+    }
+    tooltipEl.classList.add('tooltip-hidden');
+  });
+
+  // Max-edges knob (percentage of this graph's top-|weight| edges to keep).
+  // Initializes from URL (?maxLinksPct=); on change updates the URL + tears
+  // down cached cg instances so the next showGraphForPos re-runs initCg and
+  // picks up the new percentage.
+  const maxLinksPctSel = document.getElementById('max-links-pct');
+  const initialPct = new URLSearchParams(location.search).get('maxLinksPct');
+  if (initialPct !== null && initialPct !== '') maxLinksPctSel.value = initialPct;
+  maxLinksPctSel.addEventListener('change', () => {
+    const v = maxLinksPctSel.value;
+    util.params.set('maxLinksPct', v === '10' ? null : v);
+    Object.values(cgByPos).forEach(e => {
+      e.sel.html('');
+      e.initialized = false;
+    });
+    showGraphForPos(clickedPos);
   });
 
   // Build full token sequence:
@@ -656,14 +1052,23 @@ window.init = async function(){
   const outputSel = d3.select('#output-strip');
   const inputTokens = first.meta.prompt_tokens || [];
 
+  // Render whitespace tokens as visible glyphs so they don't force line breaks
+  // inside a .pertok-tok chip (which would give it double/triple height).
+  // The raw token stays in data-base-title / tooltip.
+  function displayTok(tok) {
+    if (tok === '' || tok === undefined || tok === null) return '·';
+    return tok
+      .replace(/\n/g, '↵')
+      .replace(/\t/g, '⇥')
+      .replace(/\r/g, '␍');
+  }
+
   function renderInputStrip() {
     inputSel.html('');
-    // For pertok_prefix, drop the final prompt-token chip: the prefix
-    // positions have no per-token graphs in the raw data, so the last one
-    // has no clickable counterpart. For no-prefix pertok, every position
-    // has a per-token graph in the raw data (pos_1 is just hidden by the
-    // effective-series trim), so keep <bos> + first token both visible.
-    const shown = noPrefix ? inputTokens : inputTokens.slice(0, -1);
+    // Show every prefix token. The last prefix token (e.g. "model" in the
+    // Gemma chat template `<start_of_turn>model\n`) is an input token too —
+    // dropping it silently hid it from the UI.
+    const shown = inputTokens;
     if (shown.length === 0) {
       inputSel.append('span').attr('class', 'pertok-empty').text('(no input tokens)');
       return;
@@ -679,7 +1084,7 @@ window.init = async function(){
         .attr('data-base-title', baseTitle)
         .attr('title', baseTitle);
       chip.append('span').attr('class', 'pertok-pos').text(i);
-      chip.append('span').attr('class', 'pertok-tok-text').text(tok === '' ? '·' : tok);
+      chip.append('span').attr('class', 'pertok-tok-text').text(displayTok(tok));
     });
   }
 
@@ -702,7 +1107,7 @@ window.init = async function(){
         .attr('data-base-title', baseTitle)
         .attr('title', baseTitle);
       chip.append('span').attr('class', 'pertok-pos').text(i);
-      chip.append('span').attr('class', 'pertok-tok-text').text(tok === '' ? '·' : tok);
+      chip.append('span').attr('class', 'pertok-tok-text').text(displayTok(tok));
       chip.on('click', () => {
         clickedPos = i;
         visState.slug = effectiveSlug(slugByPos[i]);
@@ -710,7 +1115,10 @@ window.init = async function(){
         visState.pruningThreshold = undefined;
         util.params.set('clickedPos', String(i));
         util.params.set('clickedId', null);
-        renderOutputStrip();
+        // Only update which chip is .selected — don't rebuild the strip.
+        // Rebuilding caused brief reflow / "layout jitter" between clicks.
+        outputSel.selectAll('.pertok-tok').classed('selected', false);
+        chip.classed('selected', true);
         showGraphForPos(clickedPos);
         paintTokenLevel();
       });
@@ -725,32 +1133,45 @@ window.init = async function(){
   const cgStack = d3.select('.cg-stack');
   const cgByPos = {};  // pos -> {sel}
 
+  // Lazy graph rendering: create an empty placeholder div per position up
+  // front (cheap — just DOM boxes), but only call initCg() for a position
+  // when it first becomes visible. This avoids fetching + rendering all
+  // 130-290 per-token graphs on page load, which was the dominant cost.
   function setupAllGraphs() {
     series.forEach(g => {
       const pos = g.pos;
       const sel = cgStack.append('div')
         .attr('class', 'cg cg-instance' + (pos === clickedPos ? '' : ' cg-hidden'))
         .attr('data-pos', pos);
-      cgByPos[pos] = {sel};
-      const m = all.find(x => x.slug === g.meta.slug);
-      const options = {
-        clickedId: null,
-        clickedIdCb: id => util.params.set('clickedId', id),
-        isGridsnap: true,
-      };
-      if (m && typeof m.node_threshold === 'number') {
-        options.pruningThreshold = m.node_threshold;
-      }
-      initCg(sel, effectiveSlug(g.meta.slug), options);
+      cgByPos[pos] = {sel, meta: g.meta, initialized: false};
     });
+    // Kick off the initially-visible position immediately.
+    if (cgByPos[clickedPos]) ensureGraphInitialized(clickedPos);
+  }
+
+  function ensureGraphInitialized(pos) {
+    const e = cgByPos[pos];
+    if (!e || e.initialized) return;
+    e.initialized = true;
+    const m = all.find(x => x.slug === e.meta.slug);
+    const options = {
+      clickedId: null,
+      clickedIdCb: id => util.params.set('clickedId', id),
+      isGridsnap: true,
+    };
+    if (m && typeof m.node_threshold === 'number') {
+      options.pruningThreshold = m.node_threshold;
+    }
+    initCg(e.sel, effectiveSlug(e.meta.slug), options);
   }
 
   function showGraphForPos(pos) {
     Object.entries(cgByPos).forEach(([p, e]) => {
       e.sel.classed('cg-hidden', parseInt(p, 10) !== pos);
     });
+    ensureGraphInitialized(pos);
     const m = all.find(x => x.slug === slugByPos[pos]);
-    document.title = `Per-token: ${currentBase} pos${pos} → ${
+    document.title = `Reasoning Circuits: ${currentBase} pos${pos} → ${
       m && m.target_tokens && m.target_tokens[0] || ''}`;
   }
 
@@ -769,10 +1190,102 @@ window.init = async function(){
   // (c) navigates between per-token graphs on click. Gated on pertok.html
   // being the entry point — other views (regress/index) never set this
   // global, so init-cg-link-graph.js keeps its original behavior there.
+  // Heuristic token-region categorization for the Gemma chat template:
+  //   special  — <bos>, <start_of_turn>, user, model, <end_of_turn>, chat-
+  //              template newlines
+  //   question — user message tokens (between "user\n" and "<end_of_turn>")
+  //   reason   — model response body (between "model\n" and the final-answer
+  //              marker, or the trailing <end_of_turn> if absent)
+  //   response — from the first "Thus, the final answer" marker onward, up
+  //              to the trailing <end_of_turn>
+  function classifyTokenRegions(tokens) {
+    const n = tokens.length;
+    const r = new Array(n).fill('special');
+    const isSpecial = t => t === '<bos>' || t === '<start_of_turn>' ||
+                           t === '<end_of_turn>' || t === 'user' ||
+                           t === 'model' || t === '\n' || t === '\n\n';
+    const userIdx = tokens.indexOf('user');
+    const eot1 = userIdx >= 0 ? tokens.indexOf('<end_of_turn>', userIdx) : -1;
+    if (userIdx >= 0) {
+      const end = eot1 > 0 ? eot1 : n;
+      for (let i = userIdx + 1; i < end; i++) {
+        if (!isSpecial(tokens[i])) r[i] = 'question';
+      }
+    }
+    const modelIdx = tokens.indexOf('model', eot1 >= 0 ? eot1 : 0);
+    const eot2 = modelIdx >= 0 ? tokens.indexOf('<end_of_turn>', modelIdx) : -1;
+    if (modelIdx >= 0) {
+      const end = eot2 > 0 ? eot2 : n;
+      for (let i = modelIdx + 1; i < end; i++) {
+        if (!isSpecial(tokens[i])) r[i] = 'reason';
+      }
+    }
+    // Find "Thus … final answer" marker within the reason span.
+    const start = modelIdx >= 0 ? modelIdx + 1 : 0;
+    const stop = eot2 > 0 ? eot2 : n;
+    for (let i = start; i < stop - 4; i++) {
+      const t = (tokens[i] ?? '').toLowerCase();
+      if (!t.includes('thus')) continue;
+      let sawFinal = false;
+      for (let j = i; j < Math.min(i + 8, stop); j++) {
+        const tj = (tokens[j] ?? '').toLowerCase();
+        if (tj.includes('final') && tj.includes('answer')) { sawFinal = true; break; }
+        if (tj.includes('final')) {
+          for (let k = j; k < Math.min(j + 3, stop); k++) {
+            if ((tokens[k] ?? '').toLowerCase().includes('answer')) { sawFinal = true; break; }
+          }
+        }
+        if (sawFinal) break;
+      }
+      if (sawFinal) {
+        for (let j = i; j < stop; j++) {
+          if (!isSpecial(tokens[j])) r[j] = 'response';
+        }
+        break;
+      }
+    }
+    return r;
+  }
+
+  const regionByPos = classifyTokenRegions(fullTokens);
+  const DEFAULT_REGION_COLORS = {
+    special: '#f5f4ee',
+    question: '#e6efff',
+    reason: '#ecf7e3',
+    response: '#ffe8e0',
+  };
+  const regionColors = {...DEFAULT_REGION_COLORS};
+  function rebuildColorByPos() {
+    const byPos = {};
+    for (let i = 0; i < regionByPos.length; i++) {
+      byPos[i] = regionColors[regionByPos[i]] || regionColors.special;
+    }
+    return byPos;
+  }
+
+  document.querySelectorAll('.region-picker input[type=color]').forEach(inp => {
+    // Initialize inputs from defaults (handles reload with URL state).
+    const region = inp.dataset.region;
+    if (regionColors[region]) inp.value = regionColors[region];
+    inp.addEventListener('input', () => {
+      regionColors[inp.dataset.region] = inp.value;
+      const byPos = rebuildColorByPos();
+      window.pertokCtx.colorByPos = byPos;
+      window.pertokCtx.regionByPos = regionByPos;
+      // Update already-rendered backgrounds in place without full re-render.
+      document.querySelectorAll('.link-graph rect.bg-col').forEach(el => {
+        const p = +el.getAttribute('data-pos');
+        el.setAttribute('fill', byPos[p] || regionColors.special);
+      });
+    });
+  });
+
   window.pertokCtx = {
     inputEndIdx: inputTokens.length,
     slugByPos: slugByPos,
     tokenByPos: tokenByPos,
+    regionByPos: regionByPos,
+    colorByPos: rebuildColorByPos(),
     get clickedPos() { return clickedPos; },
     onTokenClick: (pos) => {
       if (slugByPos[pos] === undefined) return;
@@ -782,7 +1295,9 @@ window.init = async function(){
       visState.pruningThreshold = undefined;
       util.params.set('clickedPos', String(pos));
       util.params.set('clickedId', null);
-      renderOutputStrip();
+      // Only update which chip is .selected — don't rebuild the strip.
+      outputSel.selectAll('.pertok-tok').classed('selected', false);
+      outputSel.selectAll(`.pertok-tok[data-tpos="${pos}"]`).classed('selected', true);
       renderGraph();
       paintTokenLevel();
     },
