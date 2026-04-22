@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import time
@@ -37,7 +38,33 @@ def main():
             "(e.g. username/repo-name, username/repo-name@revision)."
         ),
     )
-    attr_parser.add_argument("-p", "--prompt", required=True, help="Input prompt text to analyze.")
+    attr_parser.add_argument(
+        "-p", "--prompt",
+        required=False,
+        help=(
+            "Input prompt text to analyze. Required unless --prompt_token_ids "
+            "is provided."
+        ),
+    )
+    attr_parser.add_argument(
+        "--prompt_token_ids",
+        type=str,
+        help=(
+            "Pre-tokenized full prompt as a JSON list of ints (or a @file "
+            "path). When supplied we skip string tokenization entirely and "
+            "use these ids verbatim. --prompt is used only for logging."
+        ),
+    )
+    attr_parser.add_argument(
+        "--prefix_token_len",
+        type=int,
+        help=(
+            "Number of prefix tokens when combined with --per_token. Per-token "
+            "attribution starts at this index. Equivalent to tokenizing "
+            "--prefix_prompt and measuring its length, but lets callers pass "
+            "the split point derived from token_regions metadata directly."
+        ),
+    )
     attr_parser.add_argument(
         "-o",
         "--graph_output_path",
@@ -141,9 +168,8 @@ def main():
         type=str,
         default=None,
         help=(
-            "Optional. Only valid with --per_token. A string that must be a "
-            "token-level prefix of --prompt; per-token graphs then start at the "
-            "first token of --prompt that is NOT inside --prefix_prompt."
+            "DEPRECATED — rejected at runtime. Use --prompt_token_ids + "
+            "--prefix_token_len with --per_token instead."
         ),
     )
     attr_parser.add_argument(
@@ -235,8 +261,17 @@ def run_attribution(args, parser):
                 "--per_token is incompatible with --graph_output_path "
                 "(per-token mode writes multiple graphs, not a single .pt file)."
             )
-    if args.prefix_prompt is not None and not args.per_token:
-        parser.error("--prefix_prompt is only valid together with --per_token.")
+    # --prefix_prompt is retired: per_token takes --prompt_token_ids +
+    # --prefix_token_len instead. Reject it clearly if anyone still passes it.
+    if args.prefix_prompt is not None:
+        parser.error(
+            "--prefix_prompt is no longer supported. Use --prompt_token_ids "
+            "and --prefix_token_len with --per_token instead."
+        )
+    if args.prefix_token_len is not None and not args.per_token:
+        parser.error("--prefix_token_len is only valid together with --per_token.")
+    if args.prompt is None and args.prompt_token_ids is None:
+        parser.error("Either --prompt or --prompt_token_ids is required.")
 
     if args.abstractions:
         from circuit_tracer.utils import abstractions as abstractions_mod
@@ -268,7 +303,10 @@ def run_attribution(args, parser):
     # Run attribution
     logging.info(f"Generating attribution graph for model: {args.model}")
     logging.info(f"Loading model with dtype: {dtype}")
-    logging.info(f'Input prompt: "{args.prompt}"')
+    if args.prompt is not None:
+        logging.info(f'Input prompt: "{args.prompt}"')
+    if args.prompt_token_ids is not None:
+        logging.info("Using pre-tokenized input via --prompt_token_ids")
     if args.graph_output_path:
         logging.info(f"Output will be saved to: {args.graph_output_path}")
     logging.info(
@@ -296,38 +334,51 @@ def run_attribution(args, parser):
     )
 
     if args.per_token:
-        # Tokenize the full prompt once; ensure_tokenized prepends BOS when absent
-        # and is idempotent for tensors already starting with a special token.
-        input_ids = model_instance.ensure_tokenized(args.prompt)
+        # Per-token mode accepts ONLY pre-tokenized input. Callers are
+        # responsible for tokenizing their prompt once (e.g. via
+        # build_prompts.py) and passing both the full token ids and the
+        # number of prefix tokens.
+        if args.prompt_token_ids is None:
+            parser.error(
+                "--per_token requires --prompt_token_ids (string --prompt / "
+                "--prefix_prompt paths were removed). Pass a JSON list of "
+                "ints directly or via @file."
+            )
+        if args.prefix_token_len is None:
+            parser.error(
+                "--per_token requires --prefix_token_len — the index of the "
+                "first generated (target) token in --prompt_token_ids."
+            )
+        raw = args.prompt_token_ids
+        if raw.startswith("@"):
+            with open(raw[1:], "r") as fh:
+                raw = fh.read()
+        try:
+            token_id_list = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            parser.error(f"--prompt_token_ids is not valid JSON: {exc}")
+        if not isinstance(token_id_list, list) or not all(
+            isinstance(x, int) for x in token_id_list
+        ):
+            parser.error("--prompt_token_ids must be a JSON list of ints")
+        input_ids = torch.tensor(token_id_list, dtype=torch.long)
         n = int(input_ids.shape[0])
-        # Target the first real token onward: i=1 means prefix=[BOS], target=t_1.
         if n < 2:
             parser.error(
-                f"--per_token needs a prompt with at least 1 non-BOS token "
+                f"--per_token needs at least 1 non-BOS token "
                 f"(got tokenized length {n})."
             )
-        # Determine the starting position. With --prefix_prompt, skip ahead so the
-        # first graph targets the first prompt token *not* covered by the prefix.
-        start_i = 1
-        if args.prefix_prompt is not None:
-            prefix_ids_full = model_instance.ensure_tokenized(args.prefix_prompt)
-            m = int(prefix_ids_full.shape[0])
-            if m >= n:
-                parser.error(
-                    f"--prefix_prompt tokenizes to {m} tokens but --prompt only has "
-                    f"{n}; prefix must be strictly shorter than the prompt."
-                )
-            if not torch.equal(input_ids[:m], prefix_ids_full):
-                parser.error(
-                    "--prefix_prompt is not a token-level prefix of --prompt. "
-                    "This usually means the prefix ends mid-token; align the "
-                    "prefix to a token boundary in --prompt."
-                )
-            start_i = m
-            logging.info(
-                f"--prefix_prompt covers {m} tokens; per-token attribution starts "
-                f"at position {start_i} (target = first token after the prefix)"
+        m = int(args.prefix_token_len)
+        if m < 1 or m >= n:
+            parser.error(
+                f"--prefix_token_len={m} out of range for a prompt of {n} tokens "
+                f"(must be in [1, {n - 1}])."
             )
+        start_i = m
+        logging.info(
+            f"--prefix_token_len covers {m} tokens; per-token attribution starts "
+            f"at position {start_i}"
+        )
         logging.info(
             f"Running per-token attribution over {n - start_i} positions "
             f"(i={n - 1}..{start_i}, reverse order: last target first)"
