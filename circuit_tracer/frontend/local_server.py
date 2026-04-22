@@ -28,8 +28,9 @@ class ListHandler(logging.Handler):
         self.log_list.append(msg)
 
 
-class ReusableTCPServer(socketserver.TCPServer):
+class ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
 
 # Create handler for serving circuit graph data
